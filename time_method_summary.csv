@@ -1,0 +1,7 @@
+"solver_tol","case","method","total_elapsed_sec","tol_outer","tol_inner_base","tol_inner_floor"
+1e-04,"case_relative_change","Prox-Gradient",9.15579605102539,1e-04,1e-05,1e-08
+1e-04,"case_relative_change","Prox-Newton",129.230396032333,1e-04,1e-05,1e-08
+1e-04,"case_oracle_change","Prox-Gradient",84.3064274787903,1e-04,1e-05,1e-08
+1e-04,"case_oracle_change","Prox-Newton",136.989372491837,1e-04,1e-05,1e-08
+1e-04,"case_norm_mode","Prox-Gradient",103.909036874771,1e-04,1e-05,1e-08
+1e-04,"case_norm_mode","Prox-Newton",108.346833705902,1e-04,1e-05,1e-08

@@ -33,7 +33,10 @@ soft_thresh_offdiag <- function(A, tau) {
   B
 }
 
-safe_inv_psd <- function(A, eps = 1e-8, jitter_init = 0, jitter_max = 1e-5) {
+safe_inv_psd <- function(A, eps = NULL, jitter_init = NULL, jitter_max = NULL) {
+  if (is.null(eps)) eps <- GLOBAL_NUMERICS$safe_inv_eps
+  if (is.null(jitter_init)) jitter_init <- GLOBAL_NUMERICS$safe_inv_jitter_init
+  if (is.null(jitter_max)) jitter_max <- GLOBAL_NUMERICS$safe_inv_jitter_max
   A_sym <- symmetrize(A)
   n <- nrow(A_sym)
   jitter <- jitter_init
@@ -54,7 +57,10 @@ safe_inv_psd <- function(A, eps = 1e-8, jitter_init = 0, jitter_max = 1e-5) {
   symmetrize(V %*% (t(V) / d))
 }
 
-safe_logdet_spd <- function(A, jitter_init = 0, jitter_max = 1e-5, eps = 1e-10) {
+safe_logdet_spd <- function(A, jitter_init = NULL, jitter_max = NULL, eps = NULL) {
+  if (is.null(jitter_init)) jitter_init <- GLOBAL_NUMERICS$safe_logdet_jitter_init
+  if (is.null(jitter_max)) jitter_max <- GLOBAL_NUMERICS$safe_logdet_jitter_max
+  if (is.null(eps)) eps <- GLOBAL_NUMERICS$safe_logdet_eps
   A_sym <- symmetrize(A)
   n <- nrow(A_sym)
   jitter <- jitter_init
@@ -77,7 +83,8 @@ eig_max_symmetric <- function(A) {
   max(eigvals)
 }
 
-matrix_condition_stats <- function(A, eps = 1e-12) {
+matrix_condition_stats <- function(A, eps = NULL) {
+  if (is.null(eps)) eps <- GLOBAL_NUMERICS$matrix_condition_eps
   eigvals <- suppressWarnings(eigen(symmetrize(A), symmetric = TRUE, only.values = TRUE)$values)
   if (length(eigvals) == 0 || any(!is.finite(eigvals))) {
     return(list(min_eig = NA_real_, max_eig = NA_real_, kappa = NA_real_))
@@ -120,18 +127,219 @@ bind_rows_safe <- function(df_list) {
 ##  Shared simulation setup
 ## =========================================================
 
-shared_seed <- 20251025
-set.seed(shared_seed)
-shared_params <- list(
-  n = 1000,
-  p = 50,
-  q = 50,
-  ratio_lambda = 1e-4,
-  gamma_sparsity = 0.05,
-  gamma_mag = c(1, 2),
-  omega_kappa = 60,
-  omega_sparsity = 0.05
+get_env_numeric <- function(name, default, integer = FALSE) {
+  raw <- Sys.getenv(name, unset = NA_character_)
+  if (is.na(raw) || !nzchar(raw)) return(default)
+  parsed <- suppressWarnings(if (integer) as.integer(raw) else as.numeric(raw))
+  if (!is.finite(parsed) || is.na(parsed)) return(default)
+  parsed
+}
+
+flatten_named_list <- function(x, prefix = character()) {
+  rows <- list()
+  row_idx <- 0L
+
+  recurse <- function(obj, path) {
+    if (is.list(obj) && length(obj) > 0) {
+      nms <- names(obj)
+      if (is.null(nms)) nms <- rep("", length(obj))
+      for (i in seq_along(obj)) {
+        nm <- nms[[i]]
+        if (!nzchar(nm)) nm <- sprintf("[%d]", i)
+        recurse(obj[[i]], c(path, nm))
+      }
+      return(invisible(NULL))
+    }
+    row_idx <<- row_idx + 1L
+    key <- paste(path, collapse = ".")
+    value <- if (is.null(obj) || length(obj) == 0) {
+      "NULL"
+    } else if (length(obj) > 1) {
+      paste(as.character(obj), collapse = ",")
+    } else {
+      as.character(obj)
+    }
+    rows[[row_idx]] <<- data.frame(
+      parameter = key,
+      value = value,
+      stringsAsFactors = FALSE
+    )
+    invisible(NULL)
+  }
+
+  recurse(x, prefix)
+  bind_rows_safe(rows)
+}
+
+print_sim_config <- function(cfg) {
+  cat("=== Active SIM_CONFIG ===\n")
+  print(cfg)
+  cat("=========================\n")
+  flush.console()
+}
+
+build_parameter_catalog <- function(cfg) {
+  flat <- flatten_named_list(cfg)
+  flat$timestamp_utc <- format(Sys.time(), tz = "UTC", usetz = TRUE)
+  flat
+}
+
+get_default_sim_config <- function() {
+  solver_tol <- get_env_numeric("SOLVER_TOL", 1e-7)
+  solver_maxit <- get_env_numeric("SOLVER_MAXIT", 5000L, integer = TRUE)
+  pg_min_iter <- get_env_numeric("PG_MIN_ITER", 100L, integer = TRUE)
+  if (!is.finite(pg_min_iter) || is.na(pg_min_iter)) pg_min_iter <- 100L
+  pg_min_iter <- as.integer(pg_min_iter)
+  if (pg_min_iter < 0L) pg_min_iter <- 0L
+  if (pg_min_iter > solver_maxit) {
+    warning(sprintf("PG_MIN_ITER (%d) exceeds SOLVER_MAXIT (%d); clipping to SOLVER_MAXIT.", pg_min_iter, solver_maxit))
+    pg_min_iter <- as.integer(solver_maxit)
+  }
+  prox_max_admm <- get_env_numeric("PROX_MAX_ADMM", 1000L, integer = TRUE)
+  prox_tol <- get_env_numeric("PROX_TOL", 1e-8)
+  prox_eta <- get_env_numeric("PROX_ETA", 1e-8)
+  pn_prox_eta <- get_env_numeric("PN_PROX_ETA", prox_eta)
+  pn_tol_admm_base <- get_env_numeric("PN_TOL_ADMM_BASE", 1e-8)
+  pn_tol_admm_floor <- get_env_numeric("PN_TOL_ADMM_FLOOR", 1e-10)
+  omega_tol_floor <- get_env_numeric("OMEGA_TOL_FLOOR", 1e-10)
+  pn_outer_progress_every <- get_env_numeric("PN_OUTER_PROGRESS_EVERY", 50L, integer = TRUE)
+  pn_ls_max_halving <- get_env_numeric("PN_LS_MAX_HALVING", 3L, integer = TRUE)
+  pn_ls_min_alpha <- get_env_numeric("PN_LS_MIN_ALPHA", 1e-8)
+  oracle_fixed_iters <- get_env_numeric("ORACLE_FIXED_ITERS", 100L, integer = TRUE)
+  oracle_run_flag <- get_env_numeric("ORACLE_RUN_FOR_EXPORTS", 1L, integer = TRUE)
+  oracle_reuse_flag <- get_env_numeric("ORACLE_REUSE_EXISTING", 0L, integer = TRUE)
+  oracle_reuse_file <- Sys.getenv("ORACLE_REUSE_FILE", unset = "")
+  pg_omega_mode <- Sys.getenv("PG_OMEGA_STOP_MODE", unset = "current")
+  pn_omega_mode <- Sys.getenv("PN_OMEGA_STOP_MODE", unset = "duality_gap")
+  pn_sub_mode <- Sys.getenv("PN_SUB_ADMM_STOP_MODE", unset = "residual_plus_proxy")
+
+  list(
+    simulation = list(
+      seed = 20251025L,
+      n = 1000L,
+      p = 50L,
+      q = 50L,
+      gamma_sparsity = 0.05,
+      gamma_mag = c(1, 2),
+      gamma_signed = TRUE,
+      intercept_zero = TRUE,
+      center_X = TRUE,
+      omega_kappa = 60,
+      omega_sparsity = 0.05,
+      omega_base_val = 0.5
+    ),
+    lambda_path = list(
+      path_len = 60L,
+      ratio_lambda = 1e-4
+    ),
+    outer_pg = list(
+      max_iter = solver_maxit,
+      min_iter = pg_min_iter,
+      tol_PG_sub = solver_tol,
+      tol_obj = solver_tol,
+      tol_gm = solver_tol,
+      use_relative_obj = TRUE,
+      L0 = 1,
+      stop_modes = c("relative_change", "oracle_change", "l2_step_norm"),
+      stop_logic = "any",
+      l2_norm_tol = solver_tol
+    ),
+    outer_pn = list(
+      max_iter = solver_maxit,
+      tol_PN_sub = solver_tol,
+      stop_modes = c("local_norm", "relative_change", "oracle_change"),
+      stop_logic = "any",
+      line_search = list(
+        max_halving = max(pn_ls_max_halving, 0L),
+        min_alpha = max(pn_ls_min_alpha, 1e-16),
+        descent_eps = 2e-12
+      ),
+      progress_every = max(1L, pn_outer_progress_every)
+    ),
+    pn_subproblem_admm = list(
+      max_iter = prox_max_admm,
+      tol_PN_ADMM_base = pn_tol_admm_base,
+      tol_PN_ADMM_floor = pn_tol_admm_floor,
+      refine_trigger_halvings = 3L,
+      refine_factor = 10,
+      max_refinement_rounds = 3L,
+      stop_mode = pn_sub_mode,
+      adaptive_rho = list(
+        enabled = TRUE,
+        rho = 1,
+        rho_mu = 10,
+        rho_tau_inc = 2,
+        rho_tau_dec = 2,
+        rho_min = 1e-8,
+        rho_max = 1e8
+      )
+    ),
+    omega_prox_admm_pg = list(
+      max_iter = prox_max_admm,
+      tol_Omega_ADMM = prox_tol,
+      tol_Omega_ADMM_floor = omega_tol_floor,
+      mu = 1,
+      stop_mode = pg_omega_mode,
+      eig_floor = prox_eta
+    ),
+    omega_prox_admm_pn = list(
+      max_iter = prox_max_admm,
+      tol_Omega_ADMM = prox_tol,
+      tol_Omega_ADMM_floor = omega_tol_floor,
+      mu = 1,
+      stop_mode = pn_omega_mode,
+      eig_floor = pn_prox_eta
+    ),
+    oracle_eval = list(
+      fixed_iters = max(1L, oracle_fixed_iters),
+      run_for_exports = as.logical(oracle_run_flag > 0),
+      reuse_existing = as.logical(oracle_reuse_flag > 0),
+      reuse_file = oracle_reuse_file,
+      nondecrease_eps = 1e-12,
+      loss_definition = "best_within_fixed_iters",
+      scope = "whole_path"
+    ),
+    numerics = list(
+      safe_inv_eps = 1e-8,
+      safe_inv_jitter_init = 0,
+      safe_inv_jitter_max = 1e-5,
+      safe_logdet_jitter_init = 0,
+      safe_logdet_jitter_max = 1e-5,
+      safe_logdet_eps = 1e-10,
+      matrix_condition_eps = 1e-12,
+      pn_subproblem_eig_floor = 1e-12,
+      null_corner_eps = 1e-8
+    ),
+    benchmark = list(
+      use_oracle_mode = FALSE,
+      use_relative_gap_mode = FALSE,
+      gap_tol_mode = NULL
+    ),
+    reporting = list(
+      solver_tols = c(solver_tol),
+      method_levels = c("Prox-Newton", "Prox-Gradient"),
+      write_parameter_catalog = TRUE
+    )
+  )
+}
+
+GLOBAL_NUMERICS <- list(
+  safe_inv_eps = 1e-8,
+  safe_inv_jitter_init = 0,
+  safe_inv_jitter_max = 1e-5,
+  safe_logdet_jitter_init = 0,
+  safe_logdet_jitter_max = 1e-5,
+  safe_logdet_eps = 1e-10,
+  matrix_condition_eps = 1e-12
 )
+
+set_numeric_controls <- function(cfg) {
+  if (is.null(cfg$numerics)) return(invisible(NULL))
+  for (nm in names(cfg$numerics)) {
+    GLOBAL_NUMERICS[[nm]] <<- cfg$numerics[[nm]]
+  }
+  invisible(NULL)
+}
 
 generate_sparse_gamma <- function(p_aug, q,
                                   sparsity = 0.05,
@@ -184,60 +392,13 @@ generate_sparse_omega <- function(q,
   }
   Omega <- B + delta * diag(q)
   if (ensure_pd) {
+    eps <- GLOBAL_NUMERICS$matrix_condition_eps
     eig_vals <- suppressWarnings(eigen(symmetrize(Omega), symmetric = TRUE, only.values = TRUE)$values)
-    eig_vals <- pmax(eig_vals, 1e-8)
+    eig_vals <- pmax(eig_vals, eps)
     attr(Omega, "cond_est") <- max(eig_vals) / min(eig_vals)
   }
   Omega
 }
-
-p_aug <- shared_params$p + 1
-gamma_true <- generate_sparse_gamma(
-  p_aug,
-  shared_params$q,
-  sparsity = shared_params$gamma_sparsity,
-  mag_range = shared_params$gamma_mag
-)
-shared_Beta_true <- gamma_true[-1, , drop = FALSE]
-shared_Omega_true <- generate_sparse_omega(
-  shared_params$q,
-  kappa_target = shared_params$omega_kappa,
-  offdiag_prob = shared_params$omega_sparsity
-)
-shared_Sigma_true <- safe_inv_psd(shared_Omega_true)
-shared_truth <- list(
-  gamma = gamma_true,
-  Omega = shared_Omega_true,
-  cond_number = attr(shared_Omega_true, "cond_est")
-)
-
-shared_X <- matrix(rnorm(shared_params$n * shared_params$p), shared_params$n, shared_params$p)
-suppressPackageStartupMessages(library(MASS))
-shared_Y <- shared_X %*% shared_Beta_true + MASS::mvrnorm(
-  shared_params$n,
-  mu = rep(0, shared_params$q),
-  Sigma = shared_Sigma_true
-)
-shared_Xc <- cbind(1, scale(shared_X, center = TRUE, scale = FALSE))
-shared_p_aug <- ncol(shared_Xc)
-
-Sxy_shared <- crossprod(shared_Xc, shared_Y) / shared_params$n
-Syy_shared <- crossprod(shared_Y) / shared_params$n
-lambda_gamma_0 <- 2 * max(abs(Sxy_shared[-1, , drop = FALSE]))
-tmp_off_shared <- Syy_shared - diag(diag(Syy_shared))
-lambda_Omega_0 <- 2 * max(abs(tmp_off_shared))
-path_len <- 60
-lambda_gamma_seq <- exp(seq(log(lambda_gamma_0),
-                            log(lambda_gamma_0 * shared_params$ratio_lambda),
-                            length.out = path_len))
-lambda_Omega_seq <- exp(seq(log(lambda_Omega_0),
-                            log(lambda_Omega_0 * shared_params$ratio_lambda),
-                            length.out = path_len))
-lambda_path <- data.frame(
-  step = seq_len(path_len),
-  lambda_gamma = lambda_gamma_seq,
-  lambda_Omega = lambda_Omega_seq
-)
 
 compute_null_corner_init <- function(Sxx, Sxy, Syy, unpenalized = 1L, eps = 1e-8) {
   p_aug <- nrow(Sxx); q <- ncol(Sxy)
@@ -256,72 +417,103 @@ compute_null_corner_init <- function(Sxx, Sxy, Syy, unpenalized = 1L, eps = 1e-8
   list(gamma = gamma_init, Omega = Omega_init)
 }
 
-tol_env <- suppressWarnings(as.numeric(Sys.getenv("SOLVER_TOL", unset = NA_character_)))
-if (is.na(tol_env)) tol_env <- 1e-5
-maxit_env <- suppressWarnings(as.integer(Sys.getenv("SOLVER_MAXIT", unset = NA_character_)))
-if (is.na(maxit_env) || maxit_env <= 0) maxit_env <- 1000
+build_shared_data <- function(cfg) {
+  sim <- cfg$simulation
+  p_aug <- sim$p + 1L
 
-ctrl <- list(
-  lambda = list(gamma = lambda_gamma_seq[1], Omega = lambda_Omega_seq[1]),
-  maxit = maxit_env,
-  tol = tol_env,
-  tol_obj = tol_env,
-  tol_gm = tol_env,
-  use_relative_obj = TRUE
-)
+  set.seed(sim$seed)
+  gamma_true <- generate_sparse_gamma(
+    p_aug,
+    sim$q,
+    sparsity = sim$gamma_sparsity,
+    mag_range = sim$gamma_mag,
+    intercept_zero = isTRUE(sim$intercept_zero),
+    signed = isTRUE(sim$gamma_signed)
+  )
+  Beta_true <- gamma_true[-1, , drop = FALSE]
+  Omega_true <- generate_sparse_omega(
+    sim$q,
+    kappa_target = sim$omega_kappa,
+    offdiag_prob = sim$omega_sparsity,
+    base_val = sim$omega_base_val
+  )
+  Sigma_true <- safe_inv_psd(Omega_true)
+  truth <- list(
+    gamma = gamma_true,
+    Omega = Omega_true,
+    cond_number = attr(Omega_true, "cond_est")
+  )
 
-prox_tol_env <- suppressWarnings(as.numeric(Sys.getenv("PROX_TOL", unset = NA_character_)))
-if (is.na(prox_tol_env)) prox_tol_env <- 0.1 * tol_env
-prox_max_admm_env <- suppressWarnings(as.integer(Sys.getenv("PROX_MAX_ADMM", unset = NA_character_)))
-if (is.na(prox_max_admm_env) || prox_max_admm_env <= 0) prox_max_admm_env <- 10000
-prox_eta_env <- suppressWarnings(as.numeric(Sys.getenv("PROX_ETA", unset = NA_character_)))
-if (is.na(prox_eta_env) || prox_eta_env < 0) prox_eta_env <- 1e-6
-prox_ctrl <- list(max_admm = prox_max_admm_env, tol = prox_tol_env, eta = prox_eta_env)
+  X <- matrix(rnorm(sim$n * sim$p), sim$n, sim$p)
+  X_use <- if (isTRUE(sim$center_X)) scale(X, center = TRUE, scale = FALSE) else X
+  Xc <- cbind(1, X_use)
 
-pn_eta_env <- suppressWarnings(as.numeric(Sys.getenv("PN_PROX_ETA", unset = NA_character_)))
-if (is.na(pn_eta_env) || pn_eta_env < 0) pn_eta_env <- prox_eta_env
-pn_prox_ctrl <- list(max_admm = prox_max_admm_env, tol = prox_tol_env, eta = pn_eta_env)
+  suppressPackageStartupMessages(library(MASS))
+  Y <- X %*% Beta_true + MASS::mvrnorm(sim$n, mu = rep(0, sim$q), Sigma = Sigma_true)
 
-# PN outer monotone safeguard controls.
-pn_ls_max_halving_env <- suppressWarnings(as.integer(Sys.getenv("PN_LS_MAX_HALVING", unset = NA_character_)))
-if (is.na(pn_ls_max_halving_env) || pn_ls_max_halving_env < 0) pn_ls_max_halving_env <- 3L
-pn_ls_min_alpha_env <- suppressWarnings(as.numeric(Sys.getenv("PN_LS_MIN_ALPHA", unset = NA_character_)))
-if (is.na(pn_ls_min_alpha_env) || pn_ls_min_alpha_env <= 0) pn_ls_min_alpha_env <- 1e-8
-pn_ls_ctrl <- list(max_halving = pn_ls_max_halving_env, min_alpha = pn_ls_min_alpha_env)
+  Sxy <- crossprod(Xc, Y) / sim$n
+  Syy <- crossprod(Y) / sim$n
+  lambda_gamma_0 <- 2 * max(abs(Sxy[-1, , drop = FALSE]))
+  tmp_off <- Syy - diag(diag(Syy))
+  lambda_Omega_0 <- 2 * max(abs(tmp_off))
+  path_len <- cfg$lambda_path$path_len
+  ratio_lambda <- cfg$lambda_path$ratio_lambda
+  lambda_gamma_seq <- exp(seq(log(lambda_gamma_0),
+                              log(lambda_gamma_0 * ratio_lambda),
+                              length.out = path_len))
+  lambda_Omega_seq <- exp(seq(log(lambda_Omega_0),
+                              log(lambda_Omega_0 * ratio_lambda),
+                              length.out = path_len))
+  lambda_path <- data.frame(
+    step = seq_len(path_len),
+    lambda_gamma = lambda_gamma_seq,
+    lambda_Omega = lambda_Omega_seq
+  )
 
-# PN inner ADMM: adaptive rho enabled.
-pn_admm_ctrl <- list(
-  adaptive = TRUE,
-  rho = 1,
-  rho_mu = 10,
-  rho_tau_inc = 2,
-  rho_tau_dec = 2,
-  rho_min = 1e-8,
-  rho_max = 1e8
-)
+  null_corner_init <- compute_null_corner_init(
+    crossprod(Xc) / sim$n,
+    Sxy,
+    Syy,
+    unpenalized = 1L,
+    eps = cfg$numerics$null_corner_eps
+  )
 
-armijo_c <- 0.01
-pn_inner_admm_tol_fixed <- 1e-7
-pn_outer_progress_every_env <- suppressWarnings(as.integer(Sys.getenv("PN_OUTER_PROGRESS_EVERY", unset = NA_character_)))
-if (is.na(pn_outer_progress_every_env) || pn_outer_progress_every_env <= 0) pn_outer_progress_every_env <- 50L
+  shared_data <- list(
+    X = Xc,
+    Y = Y,
+    lambda = list(gamma = lambda_gamma_seq[1], Omega = lambda_Omega_seq[1]),
+    lambda_path = lambda_path,
+    gamma_init = null_corner_init$gamma,
+    Omega_init = null_corner_init$Omega,
+    params = sim,
+    truth = truth
+  )
 
-null_corner_init <- compute_null_corner_init(
-  crossprod(shared_Xc) / shared_params$n,
-  Sxy_shared,
-  Syy_shared,
-  unpenalized = 1L
-)
+  list(
+    shared_data = shared_data,
+    params = sim,
+    lambda_gamma_seq = lambda_gamma_seq,
+    lambda_Omega_seq = lambda_Omega_seq,
+    path_len = path_len
+  )
+}
 
-shared_data <- list(
-  X = shared_Xc,
-  Y = shared_Y,
-  lambda = ctrl$lambda,
-  lambda_path = lambda_path,
-  gamma_init = null_corner_init$gamma,
-  Omega_init = null_corner_init$Omega,
-  params = shared_params,
-  truth = shared_truth
-)
+SIM_CONFIG <- get_default_sim_config()
+set_numeric_controls(SIM_CONFIG)
+shared_seed <- SIM_CONFIG$simulation$seed
+shared_params <- SIM_CONFIG$simulation
+sim_setup <- build_shared_data(SIM_CONFIG)
+shared_data <- sim_setup$shared_data
+lambda_gamma_seq <- sim_setup$lambda_gamma_seq
+lambda_Omega_seq <- sim_setup$lambda_Omega_seq
+path_len <- sim_setup$path_len
+
+if (isTRUE(SIM_CONFIG$reporting$write_parameter_catalog)) {
+  param_catalog <- build_parameter_catalog(SIM_CONFIG)
+  write.csv(param_catalog, "simulation_parameter_catalog.csv", row.names = FALSE)
+  saveRDS(param_catalog, "simulation_parameter_catalog.rds")
+}
+print_sim_config(SIM_CONFIG)
 
 ## =========================================================
 ##  Objective and derivatives
@@ -428,14 +620,21 @@ local_norm <- function(d_gamma, d_Omega, gamma, Omega, Sxx, Oinv = NULL, beta = 
 
 prox_psd_offdiag_l1 <- function(V,
                                 tau,
-                                mu       = 1,
-                                rho      = 1,
-                                max_admm = 1000,
-                                tol      = 1e-5,
-                                eig_floor = 0,
+                                cfg_omega_admm = NULL,
+                                stop_mode = NULL,
                                 Omega_init = NULL,
                                 A_init = NULL) {
-  
+  cfg <- if (is.null(cfg_omega_admm)) {
+    list(max_iter = 1000L, tol_Omega_ADMM = 1e-6, mu = 1, stop_mode = "duality_gap", eig_floor = 0)
+  } else {
+    cfg_omega_admm
+  }
+  max_admm <- as.integer(if (!is.null(cfg$max_iter)) cfg$max_iter else 1000L)
+  tol <- if (!is.null(cfg$tol_Omega_ADMM)) cfg$tol_Omega_ADMM else 1e-6
+  mu <- if (!is.null(cfg$mu)) cfg$mu else 1
+  eig_floor <- if (!is.null(cfg$eig_floor)) cfg$eig_floor else 0
+  mode <- if (!is.null(stop_mode)) stop_mode else if (!is.null(cfg$stop_mode)) cfg$stop_mode else "duality_gap"
+
   Z <- symmetrize(V)
   offdiag_l1 <- function(M) {
     idx <- matrix(TRUE, nrow(M), ncol(M))
@@ -458,45 +657,70 @@ prox_psd_offdiag_l1 <- function(V,
     sum(Y * K_star) + 0.5 * sum((K_star - Z)^2)
   }
 
-  omega_hat <- symmetrize(soft_thresh_offdiag(Z, tau / rho))
+  omega_hat <- symmetrize(soft_thresh_offdiag(Z, tau))
   q <- nrow(omega_hat)
   if (is_pd_by_chol_rank(omega_hat - eig_floor * diag(q))) {
-    attr(omega_hat, "state") <- list(Omega = omega_hat, A = matrix(0, q, q))
+    attr(omega_hat, "state") <- list(
+      Omega = omega_hat,
+      A = matrix(0, q, q),
+      mode = mode,
+      converged = TRUE,
+      iters = 0L,
+      final_metric = 0
+    )
     return(omega_hat)
   }
 
   omega_hat <- clip_eig(omega_hat, eps = eig_floor)
-  attr(omega_hat, "state") <- list(Omega = omega_hat, A = matrix(0, q, q))
-
   Omega <- if (is.null(Omega_init)) omega_hat else symmetrize(Omega_init)
-  A     <- if (is.null(A_init)) matrix(0, nrow(Omega), ncol(Omega)) else symmetrize(A_init)
-  
+  A <- if (is.null(A_init)) matrix(0, nrow(Omega), ncol(Omega)) else symmetrize(A_init)
+  prev_Omega <- Omega
+  final_metric <- NA_real_
+  converged <- FALSE
+  iters <- 0L
+
   for (l in seq_len(max_admm)) {
+    iters <- l
     K <- clip_eig(Omega + mu * A, eps = eig_floor)
-    
     T <- (K + mu * (Z - A)) / (1 + mu)
-    Omega_new <- symmetrize(
-      soft_thresh_offdiag(T, (mu * tau) / ((1 + mu) * rho))
-    )
-    
+    Omega_new <- symmetrize(soft_thresh_offdiag(T, (mu * tau) / (1 + mu)))
     A <- A - (K - Omega_new) / mu
-    
+
+    rel_change <- sqrt(sum((Omega_new - prev_Omega)^2)) / max(1, sqrt(sum(prev_Omega^2)))
     p_val <- primal_value(Omega_new)
     Y_feas <- dual_feasible_Y(A, mu, tau)
     d_val <- dual_value(Y_feas)
     gap <- max(p_val - d_val, 0)
-    if (is.finite(gap) && is.finite(p_val)) {
-      if (gap / (1 + abs(p_val)) <= tol) {
-        K_out <- clip_eig(Omega_new, eps = eig_floor)
-        attr(K_out, "state") <- list(Omega = K_out, A = A)
-        return(K_out)
+    gap_rel <- if (is.finite(p_val)) gap / (1 + abs(p_val)) else Inf
+    final_metric <- if (identical(mode, "duality_gap")) gap_rel else rel_change
+
+    if (identical(mode, "duality_gap")) {
+      if (is.finite(gap_rel) && gap_rel <= tol) {
+        converged <- TRUE
+        Omega <- Omega_new
+        break
+      }
+    } else {
+      if (is.finite(rel_change) && rel_change <= tol) {
+        converged <- TRUE
+        Omega <- Omega_new
+        break
       }
     }
+
+    prev_Omega <- Omega
     Omega <- Omega_new
   }
-  
+
   K_out <- clip_eig(symmetrize(Omega), eps = eig_floor)
-  attr(K_out, "state") <- list(Omega = K_out, A = A)
+  attr(K_out, "state") <- list(
+    Omega = K_out,
+    A = A,
+    mode = mode,
+    converged = converged,
+    iters = iters,
+    final_metric = final_metric
+  )
   K_out
 }
 
@@ -515,6 +739,67 @@ oracle_gap_ok <- function(curr, oracle, gap_tol, use_relative_gap = FALSE) {
   gap / max(1, abs(oracle)) <= gap_tol
 }
 
+evaluate_pn_stop_modes <- function(loss_prev, loss_curr, local_norm_value,
+                                   oracle_value, tol_pn_sub,
+                                   stop_modes = c("local_norm", "relative_change", "oracle_change"),
+                                   stop_logic = "any") {
+  rel_change <- (loss_prev - loss_curr) / max(1, abs(loss_prev))
+  oracle_change <- if (!is.null(oracle_value) && is.finite(oracle_value)) {
+    (loss_curr - oracle_value) / max(1, abs(oracle_value))
+  } else {
+    Inf
+  }
+  checks <- list(
+    local_norm = is.finite(local_norm_value) && local_norm_value <= tol_pn_sub,
+    relative_change = is.finite(rel_change) && rel_change >= 0 && rel_change <= tol_pn_sub,
+    oracle_change = is.finite(oracle_change) && oracle_change <= tol_pn_sub
+  )
+  active_modes <- unique(stop_modes)
+  active_modes <- active_modes[active_modes %in% names(checks)]
+  if (length(active_modes) == 0) active_modes <- "relative_change"
+  active_vals <- vapply(active_modes, function(m) checks[[m]], logical(1))
+  should_stop <- if (identical(stop_logic, "all")) all(active_vals) else any(active_vals)
+  hit_modes <- active_modes[active_vals]
+  list(
+    should_stop = should_stop,
+    hit_modes = hit_modes,
+    rel_change = rel_change,
+    oracle_change = oracle_change
+  )
+}
+
+evaluate_pg_stop_modes <- function(loss_prev, loss_curr, l2_step_norm,
+                                   oracle_value, tol_pg_sub,
+                                   stop_modes = c("relative_change", "oracle_change", "l2_step_norm"),
+                                   stop_logic = "any",
+                                   l2_norm_tol = NULL) {
+  rel_change <- (loss_prev - loss_curr) / max(1, abs(loss_prev))
+  oracle_change <- if (!is.null(oracle_value) && is.finite(oracle_value)) {
+    (loss_curr - oracle_value) / max(1, abs(oracle_value))
+  } else {
+    Inf
+  }
+  l2_tol <- if (is.null(l2_norm_tol) || !is.finite(l2_norm_tol)) tol_pg_sub else l2_norm_tol
+  checks <- list(
+    relative_change = is.finite(rel_change) && rel_change >= 0 && rel_change <= tol_pg_sub,
+    oracle_change = is.finite(oracle_change) && oracle_change <= tol_pg_sub,
+    l2_step_norm = is.finite(l2_step_norm) && l2_step_norm <= l2_tol
+  )
+  active_modes <- unique(stop_modes)
+  active_modes <- active_modes[active_modes %in% names(checks)]
+  if (length(active_modes) == 0) active_modes <- "relative_change"
+  active_vals <- vapply(active_modes, function(m) checks[[m]], logical(1))
+  should_stop <- if (identical(stop_logic, "all")) all(active_vals) else any(active_vals)
+  hit_modes <- active_modes[active_vals]
+  list(
+    should_stop = should_stop,
+    hit_modes = hit_modes,
+    rel_change = rel_change,
+    oracle_change = oracle_change,
+    l2_step_norm = l2_step_norm
+  )
+}
+
 ## =========================================================
 ##  Prox-Gradient with improved stopping
 ## =========================================================
@@ -524,18 +809,38 @@ pg_sparse_mvreg <- function(Xc, Y, lambda_gamma, lambda_Omega,
                             max_iter = 200, tol = 1e-4, L0 = 1,
                             track_loss = TRUE,
                             ctrl = NULL, warm_state = NULL,
-                            oracle_value = NULL, gap_tol = NULL, use_relative_gap = FALSE) {
+                            oracle_value = NULL, gap_tol = NULL, use_relative_gap = FALSE,
+                            cfg = SIM_CONFIG) {
   
+  if (!is.null(cfg$outer_pg)) {
+    max_iter <- cfg$outer_pg$max_iter
+    tol <- cfg$outer_pg$tol_PG_sub
+    L0 <- cfg$outer_pg$L0
+  }
+  min_iter_pg <- if (!is.null(cfg$outer_pg$min_iter)) as.integer(cfg$outer_pg$min_iter) else 100L
   if (!is.null(ctrl)) {
     if (!is.null(ctrl$lambda$gamma)) lambda_gamma <- ctrl$lambda$gamma
     if (!is.null(ctrl$lambda$Omega)) lambda_Omega <- ctrl$lambda$Omega
     if (!is.null(ctrl$maxit)) max_iter <- ctrl$maxit
+    if (!is.null(ctrl$min_iter)) min_iter_pg <- as.integer(ctrl$min_iter)
     if (!is.null(ctrl$tol)) tol <- ctrl$tol
+    if (!is.null(ctrl$L0)) L0 <- ctrl$L0
+  }
+  if (!is.finite(min_iter_pg) || is.na(min_iter_pg)) min_iter_pg <- 100L
+  min_iter_pg <- as.integer(min_iter_pg)
+  if (min_iter_pg < 0L) min_iter_pg <- 0L
+  if (min_iter_pg > max_iter) {
+    warning(sprintf("PG min_iter (%d) exceeds max_iter (%d); clipping to max_iter.", min_iter_pg, max_iter))
+    min_iter_pg <- as.integer(max_iter)
   }
   
-  tol_obj <- if (!is.null(ctrl$tol_obj)) ctrl$tol_obj else tol
-  tol_gm  <- if (!is.null(ctrl$tol_gm))  ctrl$tol_gm  else tol
-  use_rel_obj <- isTRUE(ctrl$use_relative_obj)
+  pg_stop_modes <- if (!is.null(cfg$outer_pg$stop_modes)) cfg$outer_pg$stop_modes else c("relative_change")
+  pg_stop_logic <- if (!is.null(cfg$outer_pg$stop_logic)) cfg$outer_pg$stop_logic else "any"
+  l2_norm_tol <- if (!is.null(cfg$outer_pg$l2_norm_tol)) cfg$outer_pg$l2_norm_tol else tol
+  if (!is.null(ctrl$stop_modes)) pg_stop_modes <- ctrl$stop_modes
+  if (!is.null(ctrl$stop_logic)) pg_stop_logic <- ctrl$stop_logic
+  if (!is.null(ctrl$l2_norm_tol)) l2_norm_tol <- ctrl$l2_norm_tol
+  pg_omega_cfg <- cfg$omega_prox_admm_pg
   
   n <- nrow(Xc); p <- ncol(Xc); q <- ncol(Y)
   Sxx <- crossprod(Xc) / n
@@ -588,11 +893,9 @@ pg_sparse_mvreg <- function(Xc, Y, lambda_gamma, lambda_Omega,
       s_Omega_m <- prox_psd_offdiag_l1(
         Vo_m,
         tau = lambda_Omega / Lm,
+        cfg_omega_admm = pg_omega_cfg,
         Omega_init = if (is.null(pg_psd_state)) Omega else pg_psd_state$Omega,
-        A_init = if (is.null(pg_psd_state)) NULL else pg_psd_state$A,
-        max_admm = prox_ctrl$max_admm,
-        tol = prox_ctrl$tol,
-        eig_floor = prox_ctrl$eta
+        A_init = if (is.null(pg_psd_state)) NULL else pg_psd_state$A
       )
       pg_psd_state <- attr(s_Omega_m, "state")
       
@@ -607,9 +910,11 @@ pg_sparse_mvreg <- function(Xc, Y, lambda_gamma, lambda_Omega,
         next
       }
       
-      step_norm <- sqrt(sum(d_gamma_m^2) + sum(d_Omega_m^2))
-      
-      alpha_m <- (beta_m^2) / (lambda_m * (lambda_m + beta_m^2))
+      alpha_m <- if (lambda_m <= .Machine$double.eps) {
+        1
+      } else {
+        (beta_m^2) / (lambda_m * (lambda_m + beta_m^2))
+      }
       gamma_old <- gamma
       Omega_old <- Omega
       
@@ -637,36 +942,31 @@ pg_sparse_mvreg <- function(Xc, Y, lambda_gamma, lambda_Omega,
       loss_curr <- loss_try
       L_prev <- Lm
       accepted_step <- TRUE
-      
-      ## Gradient mapping norm uses proximal point at (gamma_old, Omega_old, Lm)
-      gm_gamma <- Lm * (gamma_old - s_gamma_m)
-      gm_Omega <- Lm * (Omega_old - s_Omega_m)
-      gm_norm  <- sqrt(sum(gm_gamma^2) + sum(gm_Omega^2))
-      
-      ## Oracle gap stopping if requested
-      if (oracle_gap_ok(loss_curr, oracle_value, gap_tol, use_relative_gap)) {
+
+      l2_step_norm <- sqrt(sum(d_gamma_m^2) + sum(d_Omega_m^2))
+      stop_eval <- evaluate_pg_stop_modes(
+        loss_prev = loss_prev,
+        loss_curr = loss_curr,
+        l2_step_norm = l2_step_norm,
+        oracle_value = oracle_value,
+        tol_pg_sub = tol,
+        stop_modes = pg_stop_modes,
+        stop_logic = pg_stop_logic,
+        l2_norm_tol = l2_norm_tol
+      )
+      if (m >= min_iter_pg && isTRUE(stop_eval$should_stop)) {
+        converged <- TRUE
+        stop_reason <- sprintf("PG stop modes reached: %s", paste(stop_eval$hit_modes, collapse = "|"))
+        break
+      }
+
+      ## Optional extra oracle-gap stop (independent of stop-mode evaluator).
+      if (m >= min_iter_pg && oracle_gap_ok(loss_curr, oracle_value, gap_tol, use_relative_gap)) {
         converged <- TRUE
         stop_reason <- "oracle gap reached"
         break
       }
-      
-      ## Objective stabilization stopping (used only when no oracle gap is supplied)
-      if (is.null(gap_tol)) {
-        if (use_rel_obj) {
-          if (rel_obj_change(loss_prev, loss_curr) <= tol_obj) {
-            converged <- TRUE
-            stop_reason <- "objective stabilized"
-            break
-          }
-        } else {
-          if (abs(loss_curr - loss_prev) <= tol_obj) {
-            converged <- TRUE
-            stop_reason <- "objective stabilized"
-            break
-          }
-        }
-      }
-      
+
       break
     }
     
@@ -702,7 +1002,7 @@ pn_subproblem_admm <- function(gamma, Omega, Sxx, Sxy, Syy,
                                lambda_gamma, lambda_Omega,
                                Oinv = NULL, beta = NULL,
                                rho = 1, mu = 1,
-                               max_admm = 10000, admm_tol = 1e-4,
+                               max_admm = 10000, admm_tol = NULL,
                                eig_floor = 1e-12,
                                adaptive_rho = TRUE,
                                rho_mu = 10,
@@ -712,8 +1012,25 @@ pn_subproblem_admm <- function(gamma, Omega, Sxx, Sxy, Syy,
                                rho_max = 1e8,
                                state = NULL,
                                n = NULL,
-                               track_trace = FALSE) {
+                               track_trace = FALSE,
+                               cfg = SIM_CONFIG) {
   p <- nrow(gamma); q <- ncol(gamma)
+
+  sub_cfg <- cfg$pn_subproblem_admm
+  rho_cfg <- sub_cfg$adaptive_rho
+  max_admm <- if (!is.null(sub_cfg$max_iter)) sub_cfg$max_iter else max_admm
+  if (is.null(admm_tol)) {
+    admm_tol <- if (!is.null(sub_cfg$tol_PN_ADMM_base)) sub_cfg$tol_PN_ADMM_base else 1e-4
+  }
+  eig_floor <- if (!is.null(cfg$numerics$pn_subproblem_eig_floor)) cfg$numerics$pn_subproblem_eig_floor else eig_floor
+  adaptive_rho <- isTRUE(rho_cfg$enabled)
+  rho <- if (!is.null(rho_cfg$rho)) rho_cfg$rho else rho
+  rho_mu <- if (!is.null(rho_cfg$rho_mu)) rho_cfg$rho_mu else rho_mu
+  rho_tau_inc <- if (!is.null(rho_cfg$rho_tau_inc)) rho_cfg$rho_tau_inc else rho_tau_inc
+  rho_tau_dec <- if (!is.null(rho_cfg$rho_tau_dec)) rho_cfg$rho_tau_dec else rho_tau_dec
+  rho_min <- if (!is.null(rho_cfg$rho_min)) rho_cfg$rho_min else rho_min
+  rho_max <- if (!is.null(rho_cfg$rho_max)) rho_cfg$rho_max else rho_max
+  stop_mode <- if (!is.null(sub_cfg$stop_mode)) sub_cfg$stop_mode else "residual_plus_proxy"
   
   beta_eff <- .ensure_beta(gamma, Omega, Oinv, beta)
   Oinv_eff <- .ensure_Oinv(Omega, Oinv)
@@ -754,6 +1071,8 @@ pn_subproblem_admm <- function(gamma, Omega, Sxx, Sxy, Syy,
   admm_converged <- FALSE
   k_last <- 0L
   inner_trace_list <- if (track_trace) vector("list", max_admm) else NULL
+  prev_inner_loss <- NA_real_
+  normalized_gap_proxy_last <- Inf
   
   for (k in 1:max_admm) {
     k_last <- k
@@ -771,12 +1090,9 @@ pn_subproblem_admm <- function(gamma, Omega, Sxx, Sxy, Syy,
     Zo <- prox_psd_offdiag_l1(
       Xi_parts$Omega,
       tau = lambda_Omega / rho_iter,
-      mu = mu,
+      cfg_omega_admm = cfg$omega_prox_admm_pn,
       Omega_init = if (is.null(prox_state)) Omega else prox_state$Omega,
-      A_init = if (is.null(prox_state)) NULL else prox_state$A,
-      max_admm = pn_prox_ctrl$max_admm,
-      tol = pn_prox_ctrl$tol,
-      eig_floor = pn_prox_ctrl$eta
+      A_init = if (is.null(prox_state)) NULL else prox_state$A
     )
     prox_state <- attr(Zo, "state")
     Z_new <- pack_xi(Zg, Zo)
@@ -792,14 +1108,24 @@ pn_subproblem_admm <- function(gamma, Omega, Sxx, Sxy, Syy,
     eps_pri <- admm_tol * scale_pri
     eps_dual <- admm_tol * scale_dual
 
-    if (track_trace) {
-      inner_loss <- NA_real_
-      if (!is.null(n) && is.finite(n) && n > 0) {
-        Oinv_zo <- tryCatch(safe_inv_psd(Zo), error = function(e) NULL)
-        if (!is.null(Oinv_zo)) {
-          inner_loss <- loss_fn(Zg, Zo, Sxx, Sxy, Syy, n, lambda_gamma, lambda_Omega, Oinv = Oinv_zo)
-        }
+    inner_loss <- NA_real_
+    if (!is.null(n) && is.finite(n) && n > 0) {
+      Oinv_zo <- tryCatch(safe_inv_psd(Zo), error = function(e) NULL)
+      if (!is.null(Oinv_zo)) {
+        inner_loss <- loss_fn(Zg, Zo, Sxx, Sxy, Syy, n, lambda_gamma, lambda_Omega, Oinv = Oinv_zo)
       }
+    }
+    progress_proxy <- if (is.finite(prev_inner_loss) && is.finite(inner_loss)) {
+      abs(prev_inner_loss - inner_loss) / max(1, abs(prev_inner_loss))
+    } else {
+      NA_real_
+    }
+    prev_inner_loss <- inner_loss
+    normalized_gap_proxy <- max(r_norm / max(eps_pri, .Machine$double.eps),
+                                s_norm / max(eps_dual, .Machine$double.eps))
+    normalized_gap_proxy_last <- normalized_gap_proxy
+
+    if (track_trace) {
       inner_trace_list[[k]] <- data.frame(
         inner_iter = k,
         training_loss = inner_loss,
@@ -808,14 +1134,25 @@ pn_subproblem_admm <- function(gamma, Omega, Sxx, Sxy, Syy,
         residual_sum = r_norm + s_norm,
         eps_pri = eps_pri,
         eps_dual = eps_dual,
-        primal_dual_gap = NA_real_,
+        primal_dual_gap = normalized_gap_proxy,
+        progress_proxy = progress_proxy,
         admm_tol_target = admm_tol,
         rho = rho_iter,
+        sub_stop_mode = stop_mode,
+        omega_stop_mode = if (!is.null(prox_state$mode)) prox_state$mode else NA_character_,
+        omega_stop_metric = if (!is.null(prox_state$final_metric)) prox_state$final_metric else NA_real_,
         stringsAsFactors = FALSE
       )
     }
-    
-    if (r_norm <= eps_pri && s_norm <= eps_dual) {
+
+    residual_ok <- (r_norm <= eps_pri && s_norm <= eps_dual)
+    proxy_ok <- is.finite(progress_proxy) && progress_proxy <= admm_tol
+    if (identical(stop_mode, "residual_plus_proxy")) {
+      if (residual_ok && (is.na(progress_proxy) || proxy_ok)) {
+        admm_converged <- TRUE
+        break
+      }
+    } else if (residual_ok) {
       admm_converged <- TRUE
       break
     }
@@ -848,6 +1185,8 @@ pn_subproblem_admm <- function(gamma, Omega, Sxx, Sxy, Syy,
   )
   out_sub$inner_iters <- k_last
   out_sub$inner_converged <- admm_converged
+  out_sub$normalized_gap_proxy <- normalized_gap_proxy_last
+  out_sub$subproblem_stop_mode <- stop_mode
   out_sub$inner_trace <- if (track_trace && k_last > 0) {
     bind_rows_safe(inner_trace_list[seq_len(k_last)])
   } else {
@@ -865,41 +1204,50 @@ pn_sparse_mvreg <- function(Xc, Y, lambda_gamma, lambda_Omega,
                             max_iter = 100, tol = 1e-4, track_loss = TRUE,
                             ctrl = NULL, warm_state = NULL,
                             oracle_value = NULL, gap_tol = NULL, use_relative_gap = FALSE,
-                            track_diagnostics = FALSE) {
-  
+                            track_diagnostics = FALSE,
+                            cfg = SIM_CONFIG,
+                            force_max_iter = NULL,
+                            ignore_stop = FALSE) {
+
+  pn_cfg <- cfg$outer_pn
+  pn_sub_cfg <- cfg$pn_subproblem_admm
+  line_search_cfg <- pn_cfg$line_search
+
+  max_iter <- pn_cfg$max_iter
+  tol <- pn_cfg$tol_PN_sub
   if (!is.null(ctrl)) {
     if (!is.null(ctrl$lambda$gamma)) lambda_gamma <- ctrl$lambda$gamma
     if (!is.null(ctrl$lambda$Omega)) lambda_Omega <- ctrl$lambda$Omega
     if (!is.null(ctrl$maxit)) max_iter <- ctrl$maxit
     if (!is.null(ctrl$tol)) tol <- ctrl$tol
   }
-  
-  tol_obj <- if (!is.null(ctrl$tol_obj)) ctrl$tol_obj else tol
-  use_rel_obj <- isTRUE(ctrl$use_relative_obj)
-  
+  if (!is.null(force_max_iter)) max_iter <- as.integer(force_max_iter)
+
   n <- nrow(Xc); p <- ncol(Xc); q <- ncol(Y)
   Sxx <- crossprod(Xc) / n
   Sxy <- crossprod(Xc, Y) / n
   Syy <- crossprod(Y) / n
-  
+
   gamma <- if (is.null(gamma_init)) matrix(0, p, q) else gamma_init
   Omega <- if (is.null(Omega_init)) diag(q) else symmetrize(Omega_init)
   Oinv <- safe_inv_psd(Omega)
-  
+
   t0 <- Sys.time()
   loss_curr <- loss_fn(gamma, Omega, Sxx, Sxy, Syy, n,
                        lambda_gamma, lambda_Omega, Oinv = Oinv)
-  
+
   if (track_loss) {
     loss_hist <- numeric(max_iter + 1)
     time_hist <- numeric(max_iter + 1)
     loss_hist[1] <- loss_curr
     time_hist[1] <- 0
   }
-  
+
   if (track_diagnostics) {
     outer_trace_list <- vector("list", max_iter + 1)
     inner_trace_list <- vector("list", max_iter)
+    refinement_trace_list <- vector("list", max_iter * (pn_sub_cfg$max_refinement_rounds + 1L))
+    refinement_trace_idx <- 0L
     cond0 <- matrix_condition_stats(Omega)
     sparse0 <- matrix_sparsity_stats(gamma, Omega)
     gap0 <- if (!is.null(oracle_value) && is.finite(oracle_value)) loss_curr - oracle_value else NA_real_
@@ -929,6 +1277,7 @@ pn_sparse_mvreg <- function(Xc, Y, lambda_gamma, lambda_Omega,
       refinement_triggered = NA,
       refinement_rounds = NA_integer_,
       subproblem_attempts = NA_integer_,
+      stop_mode_hit = NA_character_,
       min_eig = cond0$min_eig,
       max_eig = cond0$max_eig,
       kappa = cond0$kappa,
@@ -941,167 +1290,180 @@ pn_sparse_mvreg <- function(Xc, Y, lambda_gamma, lambda_Omega,
       stringsAsFactors = FALSE
     )
   }
-  
+
   converged <- FALSE
   stop_reason <- NA_character_
-  lambda_hist <- numeric(max_iter)
+  lambda_hist <- rep(NA_real_, max_iter)
   pn_psd_state <- if (!is.null(warm_state) && !is.null(warm_state$psd_state)) warm_state$psd_state else NULL
-  
+  m_last <- 0L
+
   for (m in seq_len(max_iter)) {
+    m_last <- m
     loss_prev <- loss_curr
     beta <- gamma %*% Oinv
-    
-    admm_tol_curr <- pn_inner_admm_tol_fixed
+
+    admm_tol_curr <- pn_sub_cfg$tol_PN_ADMM_base
     refinement_triggered <- FALSE
     refinement_rounds <- 0L
     total_inner_iters_m <- 0L
     all_inner_converged_m <- TRUE
-    subproblem_attempts <- 1L
+    subproblem_attempts <- 0L
     total_ls_halvings <- NA_integer_
     ls_success <- FALSE
     line_search_forced <- FALSE
     alpha <- NA_real_
-    ls_halvings <- NA_integer_
+    ls_halvings <- 0L
     armijo_lhs_used <- NA_real_
     armijo_rhs_used <- NA_real_
     gamma_new <- gamma
     Omega_new <- Omega
     Oinv_new <- Oinv
     loss_new <- loss_prev
-    last_alpha_try <- NA_real_
     lam <- NA_real_
     d_norm <- NA_real_
-    sub <- NULL
+    pn_step_failed <- FALSE
+    stop_mode_hit <- NA_character_
     inner_trace_m_accum <- list()
     inner_trace_m_idx <- 0L
-    
-    sub <- pn_subproblem_admm(gamma, Omega, Sxx, Sxy, Syy,
-                              lambda_gamma, lambda_Omega,
-                              Oinv = Oinv, beta = beta,
-                              rho = pn_admm_ctrl$rho, mu = 1,
-                              max_admm = pn_prox_ctrl$max_admm,
-                              admm_tol = admm_tol_curr,
-                              adaptive_rho = pn_admm_ctrl$adaptive,
-                              rho_mu = pn_admm_ctrl$rho_mu,
-                              rho_tau_inc = pn_admm_ctrl$rho_tau_inc,
-                              rho_tau_dec = pn_admm_ctrl$rho_tau_dec,
-                              rho_min = pn_admm_ctrl$rho_min,
-                              rho_max = pn_admm_ctrl$rho_max,
-                              state = pn_psd_state,
-                              n = n,
-                              track_trace = track_diagnostics)
-    pn_psd_state <- attr(sub$Omega, "state")
-    
-    if (!is.null(sub$inner_iters) && is.finite(sub$inner_iters)) {
-      total_inner_iters_m <- total_inner_iters_m + sub$inner_iters
-    }
-    if (!isTRUE(sub$inner_converged)) all_inner_converged_m <- FALSE
-    
-    d_gamma <- sub$gamma - gamma
-    d_Omega <- sub$Omega - Omega
-    d_norm <- sqrt(sum(d_gamma^2) + sum(d_Omega^2))
-    lam <- local_norm(d_gamma, d_Omega, gamma, Omega, Sxx, Oinv = Oinv)
-    alpha_init <- (1 + lam)^(-1)
-    
-        ## ---------------------------------------------------------
-    ## Step size (PDF Algorithm 2): strictly self-concordant damped Newton
-    ## alpha = 1 / (1 + nu), where nu = local_norm(d).
-    ##
-    ## The paper does NOT require Armijo backtracking. We only keep a very light
-    ## monotone safeguard (halve alpha) to protect against inexact subproblem
-    ## solutions / numerical issues. We NEVER "forced accept" an uphill step.
-    ## ---------------------------------------------------------
 
-    alpha_try <- alpha_init
-    ls_halvings <- 0L
-    armijo_lhs_used <- NA_real_
-    armijo_rhs_used <- NA_real_
-    ls_success <- FALSE
-    line_search_forced <- FALSE
+    max_attempts <- pn_sub_cfg$max_refinement_rounds + 1L
+    for (attempt in seq_len(max_attempts)) {
+      subproblem_attempts <- attempt
+      sub <- pn_subproblem_admm(
+        gamma, Omega, Sxx, Sxy, Syy,
+        lambda_gamma, lambda_Omega,
+        Oinv = Oinv, beta = beta,
+        admm_tol = admm_tol_curr,
+        state = pn_psd_state,
+        n = n,
+        track_trace = track_diagnostics,
+        cfg = cfg
+      )
+      pn_psd_state <- attr(sub$Omega, "state")
 
-    for (ls_try in 0:pn_ls_ctrl$max_halving) {
-      if (alpha_try < pn_ls_ctrl$min_alpha) break
+      if (!is.null(sub$inner_iters) && is.finite(sub$inner_iters)) {
+        total_inner_iters_m <- total_inner_iters_m + sub$inner_iters
+      }
+      if (!isTRUE(sub$inner_converged)) all_inner_converged_m <- FALSE
 
-      gamma_try <- gamma + alpha_try * d_gamma
-      Omega_try <- symmetrize(Omega + alpha_try * d_Omega)
+      d_gamma <- sub$gamma - gamma
+      d_Omega <- sub$Omega - Omega
+      d_norm <- sqrt(sum(d_gamma^2) + sum(d_Omega^2))
+      lam <- local_norm(d_gamma, d_Omega, gamma, Omega, Sxx, Oinv = Oinv)
+      alpha_init <- (1 + lam)^(-1)
 
-      Oinv_try <- tryCatch(safe_inv_psd(Omega_try), error = function(e) NULL)
-      if (is.null(Oinv_try)) {
+      alpha_try <- alpha_init
+      ls_halvings <- 0L
+      ls_success <- FALSE
+      for (ls_try in 0:line_search_cfg$max_halving) {
+        if (alpha_try < line_search_cfg$min_alpha) break
+        gamma_try <- gamma + alpha_try * d_gamma
+        Omega_try <- symmetrize(Omega + alpha_try * d_Omega)
+        Oinv_try <- tryCatch(safe_inv_psd(Omega_try), error = function(e) NULL)
+        if (is.null(Oinv_try)) {
+          alpha_try <- alpha_try * 0.5
+          ls_halvings <- ls_halvings + 1L
+          next
+        }
+        loss_try <- loss_fn(gamma_try, Omega_try, Sxx, Sxy, Syy, n,
+                            lambda_gamma, lambda_Omega, Oinv = Oinv_try)
+        if (is.finite(loss_try) && (loss_try <= loss_prev + line_search_cfg$descent_eps)) {
+          alpha <- alpha_try
+          ls_success <- TRUE
+          gamma_new <- gamma_try
+          Omega_new <- Omega_try
+          Oinv_new <- Oinv_try
+          loss_new <- loss_try
+          break
+        }
         alpha_try <- alpha_try * 0.5
         ls_halvings <- ls_halvings + 1L
+      }
+      total_ls_halvings <- as.integer(ls_halvings)
+
+      if (track_diagnostics && !is.null(sub$inner_trace) && nrow(sub$inner_trace) > 0) {
+        inner_trace_attempt <- sub$inner_trace
+        inner_trace_attempt$outer_iter <- m
+        inner_trace_attempt$sub_attempt <- attempt
+        inner_trace_attempt$admm_tol_target <- admm_tol_curr
+        inner_trace_attempt$direction_norm_fro <- d_norm
+        names(inner_trace_attempt)[names(inner_trace_attempt) == "training_loss"] <- "inner_training_loss"
+        inner_trace_m_idx <- inner_trace_m_idx + 1L
+        inner_trace_m_accum[[inner_trace_m_idx]] <- inner_trace_attempt
+      }
+
+      if (track_diagnostics) {
+        refinement_trace_idx <- refinement_trace_idx + 1L
+        refinement_trace_list[[refinement_trace_idx]] <- data.frame(
+          outer_iter = m,
+          sub_attempt = attempt,
+          admm_tol = admm_tol_curr,
+          line_search_halvings = ls_halvings,
+          line_search_success = ls_success,
+          inner_iters = sub$inner_iters,
+          inner_converged = sub$inner_converged,
+          stringsAsFactors = FALSE
+        )
+      }
+
+      if (ls_success) break
+
+      next_tol <- max(admm_tol_curr / pn_sub_cfg$refine_factor, pn_sub_cfg$tol_PN_ADMM_floor)
+      can_refine <- (ls_halvings >= pn_sub_cfg$refine_trigger_halvings) &&
+        (attempt <= pn_sub_cfg$max_refinement_rounds) &&
+        (next_tol < admm_tol_curr - .Machine$double.eps)
+      if (can_refine) {
+        refinement_triggered <- TRUE
+        refinement_rounds <- refinement_rounds + 1L
+        admm_tol_curr <- next_tol
         next
       }
 
-      loss_try <- loss_fn(gamma_try, Omega_try, Sxx, Sxy, Syy, n,
-                          lambda_gamma, lambda_Omega, Oinv = Oinv_try)
-
-      if (is.finite(loss_try) && (loss_try <= loss_prev + 2e-12)) {
-        alpha <- alpha_try
-        ls_success <- TRUE
-        gamma_new <- gamma_try
-        Omega_new <- Omega_try
-        Oinv_new <- Oinv_try
-        loss_new <- loss_try
-        break
-      }
-
-      alpha_try <- alpha_try * 0.5
-      ls_halvings <- ls_halvings + 1L
+      pn_step_failed <- TRUE
+      if (!ignore_stop) stop_reason <- "PN step failed to decrease objective"
+      break
     }
 
-    total_ls_halvings <- as.integer(ls_halvings)
-    last_alpha_try <- alpha_try
-
-    pn_step_failed <- FALSE
     if (!ls_success) {
-      ## No descent step found: stop rather than accepting an uphill step.
       alpha <- 0
       gamma_new <- gamma
       Omega_new <- Omega
       Oinv_new <- Oinv
       loss_new <- loss_prev
-      stop_reason <- "PN step failed to decrease objective"
-      pn_step_failed <- TRUE
+      if (ignore_stop) {
+        pn_step_failed <- FALSE
+      } else {
+        pn_step_failed <- TRUE
+      }
     }
 
-if (track_diagnostics && !is.null(sub$inner_trace) && nrow(sub$inner_trace) > 0) {
-      inner_trace_attempt <- sub$inner_trace
-      inner_trace_attempt$outer_iter <- m
-      inner_trace_attempt$sub_attempt <- subproblem_attempts
-      inner_trace_attempt$admm_tol_target <- admm_tol_curr
-      inner_trace_attempt$direction_norm_fro <- d_norm
-      names(inner_trace_attempt)[names(inner_trace_attempt) == "training_loss"] <- "inner_training_loss"
-      inner_trace_m_idx <- inner_trace_m_idx + 1L
-      inner_trace_m_accum[[inner_trace_m_idx]] <- inner_trace_attempt
-    }
-    
     lambda_hist[m] <- lam
-    
     if (track_diagnostics && inner_trace_m_idx > 0L) {
       inner_trace_list[[m]] <- bind_rows_safe(inner_trace_m_accum)
     }
-    
+
     gamma <- gamma_new
     Omega <- Omega_new
     Oinv <- Oinv_new
     loss_curr <- loss_new
-    
-    if (!pn_step_failed) {
-      if (oracle_gap_ok(loss_curr, oracle_value, gap_tol, use_relative_gap)) {
+
+    if (!pn_step_failed && !ignore_stop) {
+      stop_eval <- evaluate_pn_stop_modes(
+        loss_prev = loss_prev,
+        loss_curr = loss_curr,
+        local_norm_value = lam,
+        oracle_value = oracle_value,
+        tol_pn_sub = tol,
+        stop_modes = pn_cfg$stop_modes,
+        stop_logic = pn_cfg$stop_logic
+      )
+      if (isTRUE(stop_eval$should_stop)) {
+        converged <- TRUE
+        stop_mode_hit <- paste(stop_eval$hit_modes, collapse = "|")
+        stop_reason <- sprintf("PN stop modes reached: %s", stop_mode_hit)
+      } else if (oracle_gap_ok(loss_curr, oracle_value, gap_tol, use_relative_gap)) {
         converged <- TRUE
         stop_reason <- "oracle gap reached"
-      } else if (is.null(gap_tol)) {
-        if (use_rel_obj) {
-          if (rel_obj_change(loss_prev, loss_curr) <= tol_obj) {
-            converged <- TRUE
-            stop_reason <- "objective stabilized"
-          }
-        } else {
-          if (abs(loss_curr - loss_prev) <= tol_obj) {
-            converged <- TRUE
-            stop_reason <- "objective stabilized"
-          }
-        }
       }
     }
 
@@ -1123,7 +1485,7 @@ if (track_diagnostics && !is.null(sub$inner_trace) && nrow(sub$inner_trace) > 0)
         oracle_gap_rel = gap_rel,
         local_norm = lam,
         step_size = alpha,
-        line_search_halvings = as.integer(ls_halvings),
+        line_search_halvings = as.integer(total_ls_halvings),
         line_search_success = ls_success,
         line_search_forced = line_search_forced,
         armijo_lhs = armijo_lhs_used,
@@ -1135,6 +1497,7 @@ if (track_diagnostics && !is.null(sub$inner_trace) && nrow(sub$inner_trace) > 0)
         refinement_triggered = refinement_triggered,
         refinement_rounds = refinement_rounds,
         subproblem_attempts = subproblem_attempts,
+        stop_mode_hit = stop_mode_hit,
         min_eig = cond_m$min_eig,
         max_eig = cond_m$max_eig,
         kappa = cond_m$kappa,
@@ -1147,47 +1510,50 @@ if (track_diagnostics && !is.null(sub$inner_trace) && nrow(sub$inner_trace) > 0)
         stringsAsFactors = FALSE
       )
     }
-    
+
     if (track_loss) {
       loss_hist[m + 1] <- loss_curr
       time_hist[m + 1] <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
     }
-    
-    if (m == 1L || (pn_outer_progress_every_env > 0L && (m %% pn_outer_progress_every_env == 0L))) {
-      cat(sprintf("[PN outer] iter %d/%d | loss=%.6e | rel_change=%.3e | ls_ok=%s | forced=%s | inner=%d\n",
+
+    if (m == 1L || (pn_cfg$progress_every > 0L && (m %% pn_cfg$progress_every == 0L))) {
+      cat(sprintf("[PN outer] iter %d/%d | loss=%.6e | rel_change=%.3e | ls_ok=%s | inner=%d | admm_tol=%.1e\n",
                   m, max_iter, loss_curr, rel_obj_change(loss_prev, loss_curr),
                   ifelse(ls_success, "TRUE", "FALSE"),
-                  ifelse(line_search_forced, "TRUE", "FALSE"),
-                  total_inner_iters_m))
+                  total_inner_iters_m, admm_tol_curr))
       flush.console()
     }
-    
-    if (pn_step_failed) break
-    if (converged) break
+
+    if (!ignore_stop && pn_step_failed) break
+    if (!ignore_stop && converged) break
   }
-  
+
   elapsed_time_sec <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
+  if (is.na(stop_reason)) {
+    stop_reason <- if (isTRUE(ignore_stop)) "fixed iteration oracle run completed" else "max_iter reached"
+  }
   out <- list(
     gamma = gamma,
     Omega = Omega,
-    iters = m,
+    iters = m_last,
     converged = converged,
-    stop_reason = ifelse(is.na(stop_reason), "max_iter reached", stop_reason),
+    stop_reason = stop_reason,
     elapsed_time_sec = elapsed_time_sec,
     Sxx = Sxx,
     Sxy = Sxy,
     Syy = Syy,
     n = n,
-    lambda_hist = lambda_hist[seq_len(m)],
+    lambda_hist = lambda_hist[seq_len(max(m_last, 1L))],
     psd_state = pn_psd_state
   )
   if (track_loss) {
-    out$loss_hist <- loss_hist[1:(m + 1)]
-    out$time_hist <- time_hist[1:(m + 1)]
+    out$loss_hist <- loss_hist[1:(m_last + 1)]
+    out$time_hist <- time_hist[1:(m_last + 1)]
   }
   if (track_diagnostics) {
-    out$outer_trace <- bind_rows_safe(outer_trace_list[seq_len(m + 1)])
-    out$inner_trace <- bind_rows_safe(inner_trace_list[seq_len(m)])
+    out$outer_trace <- bind_rows_safe(outer_trace_list[seq_len(m_last + 1)])
+    out$inner_trace <- bind_rows_safe(inner_trace_list[seq_len(max(m_last, 1L))])
+    out$refinement_trace <- bind_rows_safe(refinement_trace_list[seq_len(max(refinement_trace_idx, 1L))])
     if (!is.null(out$outer_trace) && nrow(out$outer_trace) > 0) {
       out$outer_inner_map <- out$outer_trace[out$outer_trace$outer_iter > 0, c("outer_iter", "inner_iters", "inner_converged"), drop = FALSE]
     } else {
@@ -1203,7 +1569,8 @@ if (track_diagnostics && !is.null(sub$inner_trace) && nrow(sub$inner_trace) > 0)
 
 run_pg_path <- function(data_list, ctrl, ref_path = NULL,
                         warm_starts = NULL,
-                        oracle_vec = NULL, gap_tol = NULL, use_relative_gap = FALSE) {
+                        oracle_vec = NULL, gap_tol = NULL, use_relative_gap = FALSE,
+                        cfg = SIM_CONFIG) {
   lambda_path <- data_list$lambda_path
   gamma_init <- data_list$gamma_init
   Omega_init <- data_list$Omega_init
@@ -1247,7 +1614,8 @@ run_pg_path <- function(data_list, ctrl, ref_path = NULL,
                            track_loss = TRUE,
                            ctrl = ctrl_i, warm_state = warm_state_step,
                            oracle_value = oracle_value, gap_tol = gap_tol,
-                           use_relative_gap = use_relative_gap)
+                           use_relative_gap = use_relative_gap,
+                           cfg = cfg)
     
     fit$lambda_gamma <- lambda_path$lambda_gamma[i]
     fit$lambda_Omega <- lambda_path$lambda_Omega[i]
@@ -1265,7 +1633,10 @@ run_pg_path <- function(data_list, ctrl, ref_path = NULL,
 run_pn_path <- function(data_list, ctrl,
                         warm_starts = NULL,
                         oracle_vec = NULL, gap_tol = NULL, use_relative_gap = FALSE,
-                        track_diagnostics = FALSE) {
+                        track_diagnostics = FALSE,
+                        cfg = SIM_CONFIG,
+                        force_max_iter = NULL,
+                        ignore_stop = FALSE) {
   lambda_path <- data_list$lambda_path
   gamma_init <- data_list$gamma_init
   Omega_init <- data_list$Omega_init
@@ -1302,7 +1673,10 @@ run_pn_path <- function(data_list, ctrl,
                            ctrl = ctrl_i, warm_state = warm_state_step,
                            oracle_value = oracle_value, gap_tol = gap_tol,
                            use_relative_gap = use_relative_gap,
-                           track_diagnostics = track_diagnostics)
+                           track_diagnostics = track_diagnostics,
+                           cfg = cfg,
+                           force_max_iter = force_max_iter,
+                           ignore_stop = ignore_stop)
     
     fit$lambda_gamma <- lambda_path$lambda_gamma[i]
     fit$lambda_Omega <- lambda_path$lambda_Omega[i]
@@ -1335,9 +1709,175 @@ build_shared_warm_starts <- function(data_list, oracle_path) {
 ##  Oracle path utility for fair comparisons
 ## =========================================================
 
-compute_oracle_path <- function(data_list, ctrl_oracle) {
-  pn_oracle <- run_pn_path(data_list, ctrl_oracle)
-  oracle_vals <- vapply(pn_oracle, function(fit) tail(fit$loss_hist, 1), numeric(1))
+run_pn_oracle_fixed_iters <- function(data_list, cfg = SIM_CONFIG, fixed_iters = NULL,
+                                      track_diagnostics = FALSE) {
+  fixed_k <- if (is.null(fixed_iters)) cfg$oracle_eval$fixed_iters else as.integer(fixed_iters)
+  ctrl_oracle <- list(
+    lambda = list(gamma = data_list$lambda_path$lambda_gamma[1], Omega = data_list$lambda_path$lambda_Omega[1]),
+    maxit = fixed_k,
+    tol = cfg$outer_pn$tol_PN_sub
+  )
+  pn_oracle_path <- run_pn_path(
+    data_list,
+    ctrl_oracle,
+    track_diagnostics = track_diagnostics,
+    cfg = cfg,
+    force_max_iter = fixed_k,
+    ignore_stop = TRUE
+  )
+
+  eps_nondec <- cfg$oracle_eval$nondecrease_eps
+  oracle_loss_summary <- bind_rows_safe(lapply(pn_oracle_path, function(fit) {
+    loss_hist <- fit$loss_hist
+    oracle_loss <- min(loss_hist)
+    updates <- length(loss_hist) - 1L
+    data.frame(
+      path_index = fit$path_index,
+      lambda_gamma = fit$lambda_gamma,
+      lambda_Omega = fit$lambda_Omega,
+      fixed_iters = fixed_k,
+      updates_observed = updates,
+      updates_expected = fixed_k,
+      fixed_iter_ok = as.logical(updates == fixed_k),
+      oracle_loss_best100 = oracle_loss,
+      oracle_loss_final100 = tail(loss_hist, 1),
+      stringsAsFactors = FALSE
+    )
+  }))
+
+  nondecrease_counts <- bind_rows_safe(lapply(pn_oracle_path, function(fit) {
+    loss_hist <- fit$loss_hist
+    updates <- length(loss_hist) - 1L
+    nd_count <- if (updates > 0) {
+      sum(loss_hist[-1] >= loss_hist[-length(loss_hist)] - eps_nondec)
+    } else {
+      0L
+    }
+    data.frame(
+      path_index = fit$path_index,
+      lambda_gamma = fit$lambda_gamma,
+      lambda_Omega = fit$lambda_Omega,
+      fixed_iters = fixed_k,
+      updates_observed = updates,
+      nondecrease_count = nd_count,
+      nondecrease_rate = if (updates > 0) nd_count / updates else NA_real_,
+      stringsAsFactors = FALSE
+    )
+  }))
+
+  aggregate_row <- data.frame(
+    path_index = NA_integer_,
+    lambda_gamma = NA_real_,
+    lambda_Omega = NA_real_,
+    fixed_iters = fixed_k,
+    updates_observed = sum(nondecrease_counts$updates_observed, na.rm = TRUE),
+    nondecrease_count = sum(nondecrease_counts$nondecrease_count, na.rm = TRUE),
+    nondecrease_rate = sum(nondecrease_counts$nondecrease_count, na.rm = TRUE) /
+      max(1, sum(nondecrease_counts$updates_observed, na.rm = TRUE)),
+    stringsAsFactors = FALSE
+  )
+
+  list(
+    pn_path = pn_oracle_path,
+    oracle_vals = oracle_loss_summary$oracle_loss_best100,
+    oracle_loss_summary = oracle_loss_summary,
+    nondecrease_counts = nondecrease_counts,
+    nondecrease_counts_with_total = bind_rows_safe(list(nondecrease_counts, aggregate_row))
+  )
+}
+
+load_oracle_from_existing <- function(lambda_path, solver_tol, tol_tag, cfg = SIM_CONFIG) {
+  oracle_cfg <- cfg$oracle_eval
+  loss_candidates <- character(0)
+  if (!is.null(oracle_cfg$reuse_file) && nzchar(oracle_cfg$reuse_file)) {
+    loss_candidates <- c(loss_candidates, oracle_cfg$reuse_file)
+  }
+  loss_candidates <- unique(c(
+    loss_candidates,
+    sprintf("oracle_pn_100iter_loss_summary_tol_%s.csv", tol_tag),
+    "oracle_pn_100iter_loss_summary.csv",
+    "oracle_pn_100iter_loss_summary_tol_1e-07.csv"
+  ))
+
+  read_loss <- function(path) {
+    if (!file.exists(path)) return(NULL)
+    df <- tryCatch(read.csv(path, stringsAsFactors = FALSE), error = function(e) NULL)
+    if (is.null(df)) return(NULL)
+    req <- c("path_index", "oracle_loss_best100")
+    if (!all(req %in% names(df))) return(NULL)
+    if ("solver_tol" %in% names(df)) {
+      idx <- which(is.finite(df$solver_tol) & abs(df$solver_tol - solver_tol) <= .Machine$double.eps^0.5)
+      if (length(idx) > 0) df <- df[idx, , drop = FALSE]
+    }
+    df <- df[!is.na(df$path_index), , drop = FALSE]
+    if (nrow(df) == 0) return(NULL)
+    df <- df[order(df$path_index), , drop = FALSE]
+    df <- df[!duplicated(df$path_index), , drop = FALSE]
+    if (!all(lambda_path$step %in% df$path_index)) return(NULL)
+    df
+  }
+
+  loss_df <- NULL
+  source_loss <- NA_character_
+  for (cand in loss_candidates) {
+    df_try <- read_loss(cand)
+    if (!is.null(df_try)) {
+      loss_df <- df_try
+      source_loss <- cand
+      break
+    }
+  }
+  if (is.null(loss_df)) {
+    return(list(
+      oracle_vals = NULL,
+      oracle_loss_df = data.frame(),
+      oracle_nondec_df = data.frame(),
+      source_file = NA_character_
+    ))
+  }
+
+  nondec_candidates <- unique(c(
+    if (!is.na(source_loss)) sub("loss_summary", "nondecrease_counts", source_loss) else character(0),
+    sprintf("oracle_pn_100iter_nondecrease_counts_tol_%s.csv", tol_tag),
+    "oracle_pn_100iter_nondecrease_counts.csv",
+    "oracle_pn_100iter_nondecrease_counts_tol_1e-07.csv"
+  ))
+  nondec_df <- data.frame()
+  for (cand in nondec_candidates) {
+    if (!file.exists(cand)) next
+    nd_try <- tryCatch(read.csv(cand, stringsAsFactors = FALSE), error = function(e) NULL)
+    if (is.null(nd_try)) next
+    if ("solver_tol" %in% names(nd_try)) {
+      idx <- which(is.finite(nd_try$solver_tol) & abs(nd_try$solver_tol - solver_tol) <= .Machine$double.eps^0.5)
+      if (length(idx) > 0) nd_try <- nd_try[idx, , drop = FALSE]
+    }
+    nondec_df <- nd_try
+    break
+  }
+
+  oracle_vals <- loss_df$oracle_loss_best100[match(lambda_path$step, loss_df$path_index)]
+  if (any(!is.finite(oracle_vals))) {
+    return(list(
+      oracle_vals = NULL,
+      oracle_loss_df = data.frame(),
+      oracle_nondec_df = data.frame(),
+      source_file = NA_character_
+    ))
+  }
+  list(
+    oracle_vals = oracle_vals,
+    oracle_loss_df = loss_df,
+    oracle_nondec_df = nondec_df,
+    source_file = source_loss
+  )
+}
+
+compute_oracle_path <- function(data_list, cfg = SIM_CONFIG, ctrl_oracle = NULL) {
+  if (is.null(ctrl_oracle)) {
+    return(run_pn_oracle_fixed_iters(data_list, cfg = cfg, fixed_iters = cfg$oracle_eval$fixed_iters))
+  }
+  pn_oracle <- run_pn_path(data_list, ctrl_oracle, cfg = cfg)
+  oracle_vals <- vapply(pn_oracle, function(fit) min(fit$loss_hist), numeric(1))
   list(pn_path = pn_oracle, oracle_vals = oracle_vals)
 }
 
@@ -1350,14 +1890,21 @@ benchmark_pg_vs_pn <- function(data_list, ctrl,
                                gap_tol = NULL,
                                use_relative_gap = FALSE,
                                ctrl_oracle = NULL,
-                               track_pn_diagnostics = FALSE) {
+                               track_pn_diagnostics = FALSE,
+                               cfg = SIM_CONFIG,
+                               oracle_vals_override = NULL,
+                               oracle_path_override = NULL,
+                               warm_starts_override = NULL) {
   
   oracle_vals <- NULL
   pn_oracle_path <- NULL
   warm_starts <- NULL
-  if (use_oracle) {
-    if (is.null(ctrl_oracle)) stop("ctrl_oracle must be provided when use_oracle is TRUE")
-    oracle_out <- compute_oracle_path(data_list, ctrl_oracle)
+  if (!is.null(oracle_vals_override)) {
+    oracle_vals <- oracle_vals_override
+    pn_oracle_path <- oracle_path_override
+    warm_starts <- warm_starts_override
+  } else if (use_oracle) {
+    oracle_out <- compute_oracle_path(data_list, cfg = cfg, ctrl_oracle = ctrl_oracle)
     pn_oracle_path <- oracle_out$pn_path
     oracle_vals <- oracle_out$oracle_vals
     warm_starts <- build_shared_warm_starts(data_list, pn_oracle_path)
@@ -1366,10 +1913,12 @@ benchmark_pg_vs_pn <- function(data_list, ctrl,
   pn_path <- run_pn_path(data_list, ctrl, warm_starts = warm_starts,
                          oracle_vec = oracle_vals, gap_tol = gap_tol,
                          use_relative_gap = use_relative_gap,
-                         track_diagnostics = track_pn_diagnostics)
+                         track_diagnostics = track_pn_diagnostics,
+                         cfg = cfg)
   pg_path <- run_pg_path(data_list, ctrl, warm_starts = warm_starts,
                          oracle_vec = oracle_vals, gap_tol = gap_tol,
-                         use_relative_gap = use_relative_gap)
+                         use_relative_gap = use_relative_gap,
+                         cfg = cfg)
   
   pn_fit <- pn_path[[length(pn_path)]]
   pg_fit <- pg_path[[length(pg_path)]]
@@ -1467,41 +2016,118 @@ build_pn_outer_inner_map <- function(pn_path, solver_tol) {
   }))
 }
 
-build_run_config_snapshot <- function(solver_tol, prox_tol, solver_maxit, prox_max_admm,
-                                      prox_eta, pn_prox_eta, gap_tol, use_oracle,
-                                      use_relative_gap, pn_ls_max_halving,
-                                      pn_ls_min_alpha, pn_admm_rho,
-                                      pn_inner_admm_tol,
-                                      pn_ls_armijo_c,
-                                      pn_admm_adaptive) {
+build_pn_refinement_trace <- function(pn_path, solver_tol) {
+  bind_rows_safe(lapply(pn_path, function(fit) {
+    if (is.null(fit$refinement_trace) || nrow(fit$refinement_trace) == 0) return(NULL)
+    df <- fit$refinement_trace
+    df$path_index <- fit$path_index
+    df$lambda_gamma <- fit$lambda_gamma
+    df$lambda_Omega <- fit$lambda_Omega
+    df$solver_tol <- solver_tol
+    df
+  }))
+}
+
+build_pn_omega_mode_summary <- function(pn_path, solver_tol) {
+  bind_rows_safe(lapply(pn_path, function(fit) {
+    if (is.null(fit$inner_trace) || nrow(fit$inner_trace) == 0) return(NULL)
+    tab <- aggregate(
+      cbind(omega_stop_metric, inner_iter) ~ omega_stop_mode + sub_stop_mode,
+      data = fit$inner_trace,
+      FUN = function(x) mean(x, na.rm = TRUE)
+    )
+    tab$path_index <- fit$path_index
+    tab$lambda_gamma <- fit$lambda_gamma
+    tab$lambda_Omega <- fit$lambda_Omega
+    tab$solver_tol <- solver_tol
+    tab
+  }))
+}
+
+build_pg_omega_mode_summary <- function(pg_path, solver_tol) {
+  bind_rows_safe(lapply(pg_path, function(fit) {
+    st <- fit$psd_state
+    if (is.null(st)) return(NULL)
+    data.frame(
+      path_index = fit$path_index,
+      lambda_gamma = fit$lambda_gamma,
+      lambda_Omega = fit$lambda_Omega,
+      omega_stop_mode = if (!is.null(st$mode)) st$mode else NA_character_,
+      omega_stop_metric = if (!is.null(st$final_metric)) st$final_metric else NA_real_,
+      omega_inner_iters = if (!is.null(st$iters)) st$iters else NA_real_,
+      omega_inner_converged = if (!is.null(st$converged)) st$converged else NA,
+      solver_tol = solver_tol,
+      stringsAsFactors = FALSE
+    )
+  }))
+}
+
+build_run_config_snapshot <- function(cfg, solver_tol,
+                                      gap_tol, use_oracle, use_relative_gap) {
+  sim <- cfg$simulation
+  lam <- cfg$lambda_path
+  pg <- cfg$outer_pg
+  pn <- cfg$outer_pn
+  sub <- cfg$pn_subproblem_admm
+  pg_omega <- cfg$omega_prox_admm_pg
+  pn_omega <- cfg$omega_prox_admm_pn
+  num <- cfg$numerics
   data.frame(
     seed = shared_seed,
-    n = shared_params$n,
-    p = shared_params$p,
-    q = shared_params$q,
-    path_len = path_len,
-    ratio_lambda = shared_params$ratio_lambda,
-    gamma_sparsity = shared_params$gamma_sparsity,
-    gamma_mag = paste(shared_params$gamma_mag, collapse = ","),
-    gamma_mag_lo = min(shared_params$gamma_mag),
-    gamma_mag_hi = max(shared_params$gamma_mag),
-    omega_kappa = shared_params$omega_kappa,
-    omega_sparsity = shared_params$omega_sparsity,
+    n = sim$n,
+    p = sim$p,
+    q = sim$q,
+    path_len = lam$path_len,
+    ratio_lambda = lam$ratio_lambda,
+    gamma_sparsity = sim$gamma_sparsity,
+    gamma_mag = paste(sim$gamma_mag, collapse = ","),
+    gamma_mag_lo = min(sim$gamma_mag),
+    gamma_mag_hi = max(sim$gamma_mag),
+    omega_kappa = sim$omega_kappa,
+    omega_sparsity = sim$omega_sparsity,
     solver_tol = solver_tol,
-    prox_tol = prox_tol,
-    solver_maxit = solver_maxit,
-    prox_max_admm = prox_max_admm,
-    prox_eta = prox_eta,
-    pn_prox_eta = pn_prox_eta,
+    max_iter_PG_outer = pg$max_iter,
+    min_iter_PG_outer = pg$min_iter,
+    max_iter_PN_outer = pn$max_iter,
+    tol_PG_sub = pg$tol_PG_sub,
+    tol_PN_sub = pn$tol_PN_sub,
+    tol_PN_ADMM_base = sub$tol_PN_ADMM_base,
+    tol_PN_ADMM_floor = sub$tol_PN_ADMM_floor,
+    max_iter_PN_sub = sub$max_iter,
+    max_iter_Omega_ADMM_PG = pg_omega$max_iter,
+    max_iter_Omega_ADMM_PN = pn_omega$max_iter,
+    tol_Omega_ADMM_PG = pg_omega$tol_Omega_ADMM,
+    tol_Omega_ADMM_PN = pn_omega$tol_Omega_ADMM,
+    stop_mode_Omega_ADMM_PG = pg_omega$stop_mode,
+    stop_mode_Omega_ADMM_PN = pn_omega$stop_mode,
+    stop_mode_PN_sub = sub$stop_mode,
+    eig_floor_Omega_PG = pg_omega$eig_floor,
+    eig_floor_Omega_PN = pn_omega$eig_floor,
+    eig_floor_PN_subproblem = num$pn_subproblem_eig_floor,
+    safe_inv_eps = num$safe_inv_eps,
+    safe_inv_jitter_init = num$safe_inv_jitter_init,
+    safe_inv_jitter_max = num$safe_inv_jitter_max,
+    safe_logdet_eps = num$safe_logdet_eps,
+    safe_logdet_jitter_init = num$safe_logdet_jitter_init,
+    safe_logdet_jitter_max = num$safe_logdet_jitter_max,
+    matrix_condition_eps = num$matrix_condition_eps,
+    null_corner_eps = num$null_corner_eps,
     gap_tol = gap_tol,
     use_oracle = use_oracle,
     use_relative_gap = use_relative_gap,
-    pn_ls_max_halving = pn_ls_max_halving,
-    pn_ls_min_alpha = pn_ls_min_alpha,
-    pn_admm_rho = pn_admm_rho,
-    pn_inner_admm_tol = pn_inner_admm_tol,
-    pn_ls_armijo_c = pn_ls_armijo_c,
-    pn_admm_adaptive = pn_admm_adaptive,
+    pn_ls_max_halving = pn$line_search$max_halving,
+    pn_ls_min_alpha = pn$line_search$min_alpha,
+    pn_ls_descent_eps = pn$line_search$descent_eps,
+    pn_admm_rho = sub$adaptive_rho$rho,
+    pn_admm_adaptive = sub$adaptive_rho$enabled,
+    pn_admm_rho_mu = sub$adaptive_rho$rho_mu,
+    pn_admm_rho_tau_inc = sub$adaptive_rho$rho_tau_inc,
+    pn_admm_rho_tau_dec = sub$adaptive_rho$rho_tau_dec,
+    pn_refine_trigger_halvings = sub$refine_trigger_halvings,
+    pn_refine_factor = sub$refine_factor,
+    pn_refine_max_rounds = sub$max_refinement_rounds,
+    oracle_fixed_iters = cfg$oracle_eval$fixed_iters,
+    oracle_nondecrease_eps = cfg$oracle_eval$nondecrease_eps,
     stringsAsFactors = FALSE
   )
 }
@@ -1518,21 +2144,17 @@ format_tol_tag <- function(tol) {
   gsub("\\.", "p", tag)
 }
 
-solver_tols <- c(1e-5)
-solver_maxit <- 1000L
-prox_max_admm <- 1000L
-prox_eta <- 1e-8
-pn_prox_eta <- 1e-8
-
+solver_tols <- SIM_CONFIG$reporting$solver_tols
 settings_table <- data.frame(
   solver_tol = solver_tols,
-  prox_tol = 0.1 * solver_tols,
-  solver_maxit = solver_maxit,
-  prox_max_admm = prox_max_admm,
-  prox_eta = prox_eta,
-  pn_prox_eta = pn_prox_eta,
-  pn_inner_admm_tol = pn_inner_admm_tol_fixed,
-  pn_ls_armijo_c = armijo_c,
+  max_iter_PG_outer = SIM_CONFIG$outer_pg$max_iter,
+  min_iter_PG_outer = SIM_CONFIG$outer_pg$min_iter,
+  max_iter_PN_outer = SIM_CONFIG$outer_pn$max_iter,
+  max_iter_PN_sub = SIM_CONFIG$pn_subproblem_admm$max_iter,
+  tol_PN_ADMM_base = SIM_CONFIG$pn_subproblem_admm$tol_PN_ADMM_base,
+  tol_PN_ADMM_floor = SIM_CONFIG$pn_subproblem_admm$tol_PN_ADMM_floor,
+  tol_Omega_ADMM_PG = SIM_CONFIG$omega_prox_admm_pg$tol_Omega_ADMM,
+  tol_Omega_ADMM_PN = SIM_CONFIG$omega_prox_admm_pn$tol_Omega_ADMM,
   n = shared_params$n,
   p = shared_params$p,
   q = shared_params$q,
@@ -1541,143 +2163,302 @@ settings_table <- data.frame(
 )
 print(settings_table)
 
-method_levels <- c("Prox-Newton", "Prox-Gradient")
+stop_mode_cases <- list(
+  case_relative_change = list(
+    label = "relative_change",
+    pn_stop_modes = c("relative_change"),
+    pg_stop_modes = c("relative_change")
+  ),
+  case_oracle_change = list(
+    label = "oracle_change",
+    pn_stop_modes = c("oracle_change"),
+    pg_stop_modes = c("oracle_change")
+  ),
+  case_norm_mode = list(
+    label = "norm_mode",
+    pn_stop_modes = c("local_norm"),
+    pg_stop_modes = c("l2_step_norm")
+  )
+)
+
+ensure_data_frame <- function(df) {
+  if (is.null(df)) data.frame(stringsAsFactors = FALSE) else df
+}
+
+add_case_column <- function(df, case_name) {
+  df <- ensure_data_frame(df)
+  if (nrow(df) == 0) {
+    df$case <- character(0)
+  } else {
+    df$case <- case_name
+  }
+  df
+}
+
+method_levels <- SIM_CONFIG$reporting$method_levels
 all_results <- list()
 time_tables <- list()
 lambda_summary_tables <- list()
 pn_outer_trace_tables <- list()
 pn_inner_trace_tables <- list()
 pn_outer_inner_map_tables <- list()
+pn_refinement_tables <- list()
+pn_omega_mode_tables <- list()
+pg_omega_mode_tables <- list()
 config_snapshot_tables <- list()
+oracle_loss_tables <- list()
+oracle_nondec_tables <- list()
 
 for (solver_tol in solver_tols) {
-  cat(sprintf("\n=== Running solver_tol = %.1e (prox_tol = %.1e) ===\n",
-              solver_tol, 0.1 * solver_tol))
+  cat(sprintf("\n=== Running solver_tol = %.1e ===\n", solver_tol))
   flush.console()
-  ctrl <- list(
-    lambda = list(gamma = lambda_gamma_seq[1], Omega = lambda_Omega_seq[1]),
-    maxit = solver_maxit,
-    tol = solver_tol,
-    tol_obj = solver_tol,
-    tol_gm = solver_tol,
-    use_relative_obj = TRUE
-  )
-
-  prox_ctrl <<- list(max_admm = prox_max_admm, tol = 0.1 * solver_tol, eta = prox_eta)
-  pn_prox_ctrl <<- list(max_admm = prox_max_admm, tol = 0.1 * solver_tol, eta = pn_prox_eta)
-
-  # Stop by objective stabilization only (no oracle-gap stopping).
-  use_oracle_mode <- FALSE
-  use_relative_gap_mode <- FALSE
-  gap_tol_mode <- NULL
-  ctrl_oracle <- NULL
-
-  res <- benchmark_pg_vs_pn(
-    shared_data, ctrl,
-    use_oracle = use_oracle_mode,
-    gap_tol = gap_tol_mode,
-    use_relative_gap = use_relative_gap_mode,
-    ctrl_oracle = ctrl_oracle,
-    track_pn_diagnostics = TRUE
-  )
-  res$path_summary$solver_tol <- solver_tol
-  all_results[[as.character(solver_tol)]] <- res
   tol_tag <- format_tol_tag(solver_tol)
-  
-  lambda_summary_df <- build_lambda_summary(res, solver_tol)
-  pn_outer_trace_df <- build_pn_outer_trace(res$pn_path, solver_tol)
-  pn_inner_trace_df <- build_pn_inner_trace(res$pn_path, solver_tol)
-  pn_outer_inner_map_df <- build_pn_outer_inner_map(res$pn_path, solver_tol)
-  config_snapshot_df <- build_run_config_snapshot(
-    solver_tol = solver_tol,
-    prox_tol = 0.1 * solver_tol,
-    solver_maxit = solver_maxit,
-    prox_max_admm = prox_max_admm,
-    prox_eta = prox_eta,
-    pn_prox_eta = pn_prox_eta,
-    gap_tol = if (is.null(gap_tol_mode)) NA_real_ else gap_tol_mode,
-    use_oracle = use_oracle_mode,
-    use_relative_gap = use_relative_gap_mode,
-    pn_ls_max_halving = pn_ls_ctrl$max_halving,
-    pn_ls_min_alpha = pn_ls_ctrl$min_alpha,
-    pn_admm_rho = pn_admm_ctrl$rho,
-    pn_inner_admm_tol = pn_inner_admm_tol_fixed,
-    pn_ls_armijo_c = armijo_c,
-    pn_admm_adaptive = pn_admm_ctrl$adaptive
-  )
-  
-  lambda_summary_tables[[as.character(solver_tol)]] <- lambda_summary_df
-  pn_outer_trace_tables[[as.character(solver_tol)]] <- pn_outer_trace_df
-  pn_inner_trace_tables[[as.character(solver_tol)]] <- pn_inner_trace_df
-  pn_outer_inner_map_tables[[as.character(solver_tol)]] <- pn_outer_inner_map_df
-  config_snapshot_tables[[as.character(solver_tol)]] <- config_snapshot_df
-  
-  write.csv(lambda_summary_df, sprintf("lambda_summary_tol_%s.csv", tol_tag), row.names = FALSE)
-  write.csv(pn_outer_trace_df, sprintf("pn_outer_trace_tol_%s.csv", tol_tag), row.names = FALSE)
-  write.csv(pn_inner_trace_df, sprintf("pn_inner_trace_tol_%s.csv", tol_tag), row.names = FALSE)
-  write.csv(pn_outer_inner_map_df, sprintf("pn_outer_inner_map_tol_%s.csv", tol_tag), row.names = FALSE)
-  write.csv(config_snapshot_df, sprintf("run_config_snapshot_tol_%s.csv", tol_tag), row.names = FALSE)
-  saveRDS(list(
-    lambda_summary = lambda_summary_df,
-    pn_outer_trace = pn_outer_trace_df,
-    pn_inner_trace = pn_inner_trace_df,
-    pn_outer_inner_map = pn_outer_inner_map_df,
-    run_config_snapshot = config_snapshot_df
-  ), file = sprintf("pn_diagnostics_tol_%s.rds", tol_tag))
 
-  loss_plot_df <- res$path_summary
-  loss_plot_df$method <- factor(loss_plot_df$method, levels = method_levels)
-  loss_plot_df$log_lambda <- log(loss_plot_df$lambda_gamma)
+  cfg_tol <- SIM_CONFIG
+  cfg_tol$outer_pg$tol_PG_sub <- solver_tol
+  cfg_tol$outer_pg$tol_obj <- solver_tol
+  cfg_tol$outer_pg$tol_gm <- solver_tol
+  cfg_tol$outer_pg$l2_norm_tol <- solver_tol
+  cfg_tol$outer_pn$tol_PN_sub <- solver_tol
+  set_numeric_controls(cfg_tol)
 
-  final_loss_plot <- ggplot(loss_plot_df,
-                            aes(x = log_lambda, y = final_loss,
-                                colour = method, shape = method, group = method)) +
-    geom_line(linewidth = 0.9) +
-    geom_point(size = 2.2, stroke = 0.9) +
-    scale_shape_manual(values = c("Prox-Newton" = 4, "Prox-Gradient" = 16)) +
-    labs(x = expression(log(lambda)),
-         y = "Training Loss",
-         colour = NULL,
-         shape = NULL) +
-    theme_minimal(base_size = 13)
+  oracle_vals_shared <- NULL
+  oracle_loss_df <- data.frame()
+  oracle_nondec_df <- data.frame()
+  if (isTRUE(cfg_tol$oracle_eval$reuse_existing)) {
+    oracle_loaded <- load_oracle_from_existing(
+      lambda_path = shared_data$lambda_path,
+      solver_tol = solver_tol,
+      tol_tag = tol_tag,
+      cfg = cfg_tol
+    )
+    oracle_vals_shared <- oracle_loaded$oracle_vals
+    oracle_loss_df <- oracle_loaded$oracle_loss_df
+    oracle_nondec_df <- oracle_loaded$oracle_nondec_df
+    if (is.null(oracle_vals_shared)) {
+      stop("Oracle reuse requested, but no compatible oracle file was found.")
+    }
+    cat(sprintf("Reusing oracle from existing file: %s\n", oracle_loaded$source_file))
+    flush.console()
+  } else if (isTRUE(cfg_tol$oracle_eval$run_for_exports)) {
+    oracle_run <- run_pn_oracle_fixed_iters(
+      shared_data,
+      cfg = cfg_tol,
+      fixed_iters = cfg_tol$oracle_eval$fixed_iters,
+      track_diagnostics = FALSE
+    )
+    oracle_vals_shared <- oracle_run$oracle_vals
+    oracle_loss_df <- oracle_run$oracle_loss_summary
+    oracle_nondec_df <- oracle_run$nondecrease_counts_with_total
+  } else {
+    stop("No oracle source available. Enable ORACLE_REUSE_EXISTING=1 or ORACLE_RUN_FOR_EXPORTS=1.")
+  }
 
-  iter_plot <- ggplot(loss_plot_df,
-                      aes(x = log_lambda, y = iters,
-                          colour = method, shape = method, group = method)) +
-    geom_line(linewidth = 0.9) +
-    geom_point(size = 2.2, stroke = 0.9) +
-    scale_shape_manual(values = c("Prox-Newton" = 4, "Prox-Gradient" = 16)) +
-    labs(x = expression(log(lambda[gamma])),
-         y = "number of iterations",
-         colour = NULL,
-         shape = NULL) +
-    theme_minimal(base_size = 13)
+  if (nrow(oracle_loss_df) > 0) {
+    oracle_loss_df$solver_tol <- solver_tol
+    oracle_loss_df$oracle_case <- "case_oracle_change"
+  }
+  if (nrow(oracle_nondec_df) > 0) {
+    oracle_nondec_df$solver_tol <- solver_tol
+    oracle_nondec_df$oracle_case <- "case_oracle_change"
+  }
+  oracle_loss_tables[[as.character(solver_tol)]] <- oracle_loss_df
+  oracle_nondec_tables[[as.character(solver_tol)]] <- oracle_nondec_df
+  write.csv(oracle_loss_df, sprintf("oracle_pn_100iter_loss_summary_tol_%s.csv", tol_tag), row.names = FALSE)
+  write.csv(oracle_nondec_df, sprintf("oracle_pn_100iter_nondecrease_counts_tol_%s.csv", tol_tag), row.names = FALSE)
 
-  ggsave(paste0("pn_pg_final_loss_vs_lambda_tol_", tol_tag, ".png"),
-         final_loss_plot, width = 9, height = 4.5, dpi = 300)
-  ggsave(paste0("pn_pg_iters_vs_lambda_tol_", tol_tag, ".png"),
-         iter_plot, width = 9, height = 4.5, dpi = 300)
+  case_time_rows <- list()
+  for (case_name in names(stop_mode_cases)) {
+    case_spec <- stop_mode_cases[[case_name]]
+    cat(sprintf("  -> case: %s | PN=%s | PG=%s\n",
+                case_name,
+                paste(case_spec$pn_stop_modes, collapse = "|"),
+                paste(case_spec$pg_stop_modes, collapse = "|")))
+    flush.console()
 
-  print(final_loss_plot)
-  print(iter_plot)
+    cfg_case <- cfg_tol
+    cfg_case$outer_pn$stop_modes <- case_spec$pn_stop_modes
+    cfg_case$outer_pn$stop_logic <- "any"
+    cfg_case$outer_pg$stop_modes <- case_spec$pg_stop_modes
+    cfg_case$outer_pg$stop_logic <- "any"
+    cfg_case$outer_pg$l2_norm_tol <- solver_tol
+    set_numeric_controls(cfg_case)
 
-  total_time_by_method <- aggregate(elapsed_sec ~ method, data = res$path_summary, sum)
-  total_time_by_method$solver_tol <- solver_tol
-  time_tables[[as.character(solver_tol)]] <- total_time_by_method
-  print(total_time_by_method)
+    ctrl_case <- list(
+      lambda = list(gamma = lambda_gamma_seq[1], Omega = lambda_Omega_seq[1]),
+      maxit = cfg_case$outer_pn$max_iter,
+      tol = solver_tol,
+      L0 = cfg_case$outer_pg$L0,
+      stop_modes = cfg_case$outer_pg$stop_modes,
+      stop_logic = cfg_case$outer_pg$stop_logic,
+      l2_norm_tol = cfg_case$outer_pg$l2_norm_tol
+    )
 
-  saveRDS(res, file = sprintf("res_tol_%s.rds", tol_tag))
-  saveRDS(list(
-    pn_path = res$pn_path,
-    pg_path = res$pg_path,
-    lambda_path = shared_data$lambda_path
-  ), file = sprintf("lambda_path_estimators_tol_%s.rds", tol_tag))
+    oracle_vec_case <- if (identical(case_name, "case_oracle_change")) oracle_vals_shared else NULL
+
+    res <- benchmark_pg_vs_pn(
+      shared_data, ctrl_case,
+      use_oracle = FALSE,
+      gap_tol = cfg_case$benchmark$gap_tol_mode,
+      use_relative_gap = cfg_case$benchmark$use_relative_gap_mode,
+      ctrl_oracle = NULL,
+      track_pn_diagnostics = TRUE,
+      cfg = cfg_case,
+      oracle_vals_override = oracle_vec_case
+    )
+    res$path_summary$solver_tol <- solver_tol
+    res$path_summary$case <- case_name
+    all_results[[paste0(tol_tag, "_", case_name)]] <- res
+
+    lambda_summary_df <- build_lambda_summary(res, solver_tol)
+    pn_outer_trace_df <- build_pn_outer_trace(res$pn_path, solver_tol)
+    pn_inner_trace_df <- build_pn_inner_trace(res$pn_path, solver_tol)
+    pn_outer_inner_map_df <- build_pn_outer_inner_map(res$pn_path, solver_tol)
+    pn_refinement_df <- build_pn_refinement_trace(res$pn_path, solver_tol)
+    pn_omega_mode_df <- build_pn_omega_mode_summary(res$pn_path, solver_tol)
+    pg_omega_mode_df <- build_pg_omega_mode_summary(res$pg_path, solver_tol)
+    config_snapshot_df <- build_run_config_snapshot(
+      cfg = cfg_case,
+      solver_tol = solver_tol,
+      gap_tol = if (is.null(cfg_case$benchmark$gap_tol_mode)) NA_real_ else cfg_case$benchmark$gap_tol_mode,
+      use_oracle = identical(case_name, "case_oracle_change"),
+      use_relative_gap = cfg_case$benchmark$use_relative_gap_mode
+    )
+
+    lambda_summary_df <- add_case_column(lambda_summary_df, case_name)
+    pn_outer_trace_df <- add_case_column(pn_outer_trace_df, case_name)
+    pn_inner_trace_df <- add_case_column(pn_inner_trace_df, case_name)
+    pn_outer_inner_map_df <- add_case_column(pn_outer_inner_map_df, case_name)
+    pn_refinement_df <- add_case_column(pn_refinement_df, case_name)
+    pn_omega_mode_df <- add_case_column(pn_omega_mode_df, case_name)
+    pg_omega_mode_df <- add_case_column(pg_omega_mode_df, case_name)
+    config_snapshot_df <- add_case_column(config_snapshot_df, case_name)
+
+    result_key <- paste0(tol_tag, "_", case_name)
+    lambda_summary_tables[[result_key]] <- lambda_summary_df
+    pn_outer_trace_tables[[result_key]] <- pn_outer_trace_df
+    pn_inner_trace_tables[[result_key]] <- pn_inner_trace_df
+    pn_outer_inner_map_tables[[result_key]] <- pn_outer_inner_map_df
+    pn_refinement_tables[[result_key]] <- pn_refinement_df
+    pn_omega_mode_tables[[result_key]] <- pn_omega_mode_df
+    pg_omega_mode_tables[[result_key]] <- pg_omega_mode_df
+    config_snapshot_tables[[result_key]] <- config_snapshot_df
+
+    write.csv(lambda_summary_df, sprintf("lambda_summary_%s_tol_%s.csv", case_name, tol_tag), row.names = FALSE)
+    write.csv(pn_outer_trace_df, sprintf("pn_outer_trace_%s_tol_%s.csv", case_name, tol_tag), row.names = FALSE)
+    write.csv(pn_inner_trace_df, sprintf("pn_inner_trace_%s_tol_%s.csv", case_name, tol_tag), row.names = FALSE)
+    write.csv(pn_outer_inner_map_df, sprintf("pn_outer_inner_map_%s_tol_%s.csv", case_name, tol_tag), row.names = FALSE)
+    write.csv(pn_refinement_df, sprintf("pn_adaptive_tol_refinement_trace_%s_tol_%s.csv", case_name, tol_tag), row.names = FALSE)
+    write.csv(pn_omega_mode_df, sprintf("pn_omega_admm_mode_summary_%s_tol_%s.csv", case_name, tol_tag), row.names = FALSE)
+    write.csv(pg_omega_mode_df, sprintf("pg_omega_admm_mode_summary_%s_tol_%s.csv", case_name, tol_tag), row.names = FALSE)
+    write.csv(config_snapshot_df, sprintf("run_config_snapshot_%s_tol_%s.csv", case_name, tol_tag), row.names = FALSE)
+    saveRDS(list(
+      lambda_summary = lambda_summary_df,
+      pn_outer_trace = pn_outer_trace_df,
+      pn_inner_trace = pn_inner_trace_df,
+      pn_outer_inner_map = pn_outer_inner_map_df,
+      pn_adaptive_tol_refinement_trace = pn_refinement_df,
+      pn_omega_admm_mode_summary = pn_omega_mode_df,
+      pg_omega_admm_mode_summary = pg_omega_mode_df,
+      run_config_snapshot = config_snapshot_df
+    ), file = sprintf("pn_diagnostics_%s_tol_%s.rds", case_name, tol_tag))
+
+    loss_plot_df <- res$path_summary
+    loss_plot_df$method <- factor(loss_plot_df$method, levels = method_levels)
+    loss_plot_df$log_lambda <- log(loss_plot_df$lambda_gamma)
+
+    total_time_by_method <- aggregate(elapsed_sec ~ method, data = res$path_summary, sum)
+    total_time_by_method$solver_tol <- solver_tol
+    total_time_by_method$case <- case_name
+    total_time_by_method$tol_outer <- solver_tol
+    total_time_by_method$tol_inner_base <- cfg_case$pn_subproblem_admm$tol_PN_ADMM_base
+    total_time_by_method$tol_inner_floor <- cfg_case$pn_subproblem_admm$tol_PN_ADMM_floor
+    case_time_rows[[case_name]] <- total_time_by_method
+    time_tables[[paste0(tol_tag, "_", case_name)]] <- total_time_by_method
+
+    pn_time <- total_time_by_method$elapsed_sec[total_time_by_method$method == "Prox-Newton"]
+    pg_time <- total_time_by_method$elapsed_sec[total_time_by_method$method == "Prox-Gradient"]
+    if (length(pn_time) == 0) pn_time <- NA_real_
+    if (length(pg_time) == 0) pg_time <- NA_real_
+    time_subtitle <- sprintf("Total path time (sec): PN=%.3f, PG=%.3f", pn_time[1], pg_time[1])
+
+    final_loss_plot <- ggplot(loss_plot_df,
+                              aes(x = log_lambda, y = final_loss,
+                                  colour = method, shape = method, group = method)) +
+      geom_line(linewidth = 0.9) +
+      geom_point(size = 2.2, stroke = 0.9) +
+      scale_shape_manual(values = c("Prox-Newton" = 4, "Prox-Gradient" = 16)) +
+      labs(
+        title = sprintf("Training loss vs log(lambda): %s", case_name),
+        subtitle = time_subtitle,
+        x = expression(log(lambda)),
+        y = "Training Loss",
+        colour = NULL,
+        shape = NULL
+      ) +
+      theme_minimal(base_size = 13)
+
+    iter_plot <- ggplot(loss_plot_df,
+                        aes(x = log_lambda, y = iters,
+                            colour = method, shape = method, group = method)) +
+      geom_line(linewidth = 0.9) +
+      geom_point(size = 2.2, stroke = 0.9) +
+      scale_shape_manual(values = c("Prox-Newton" = 4, "Prox-Gradient" = 16)) +
+      labs(
+        title = sprintf("Iterations vs log(lambda): %s", case_name),
+        subtitle = time_subtitle,
+        x = expression(log(lambda)),
+        y = "Number of iterations",
+        colour = NULL,
+        shape = NULL
+      ) +
+      theme_minimal(base_size = 13)
+
+    ggsave(
+      sprintf("pn_pg_final_loss_vs_loglambda_%s_tol_%s.png", case_name, tol_tag),
+      final_loss_plot,
+      width = 9,
+      height = 4.5,
+      dpi = 300
+    )
+    ggsave(
+      sprintf("pn_pg_iters_vs_loglambda_%s_tol_%s.png", case_name, tol_tag),
+      iter_plot,
+      width = 9,
+      height = 4.5,
+      dpi = 300
+    )
+
+    print(final_loss_plot)
+    print(iter_plot)
+
+    saveRDS(res, file = sprintf("res_%s_tol_%s.rds", case_name, tol_tag))
+    saveRDS(list(
+      pn_path = res$pn_path,
+      pg_path = res$pg_path,
+      lambda_path = shared_data$lambda_path
+    ), file = sprintf("lambda_path_estimators_%s_tol_%s.rds", case_name, tol_tag))
+  }
+
+  case_time_df <- bind_rows_safe(case_time_rows)
+  if (!is.null(case_time_df) && nrow(case_time_df) > 0) {
+    case_time_export <- case_time_df[, c("case", "method", "elapsed_sec", "tol_outer", "tol_inner_base", "tol_inner_floor"), drop = FALSE]
+    names(case_time_export) <- c("case", "method", "total_elapsed_sec", "tol_outer", "tol_inner_base", "tol_inner_floor")
+    write.csv(
+      case_time_export,
+      sprintf("solution_path_time_by_stop_mode_tol_%s.csv", tol_tag),
+      row.names = FALSE
+    )
+    print(case_time_export)
+  }
 }
 
-time_summary <- do.call(rbind, time_tables)
-row.names(time_summary) <- NULL
-time_summary <- time_summary[, c("solver_tol", "method", "elapsed_sec")]
-names(time_summary) <- c("solver_tol", "method", "total_elapsed_sec")
+time_summary <- bind_rows_safe(time_tables)
+if (is.null(time_summary)) time_summary <- data.frame()
+if (nrow(time_summary) > 0) {
+  time_summary <- time_summary[, c("solver_tol", "case", "method", "elapsed_sec", "tol_outer", "tol_inner_base", "tol_inner_floor"), drop = FALSE]
+  names(time_summary) <- c("solver_tol", "case", "method", "total_elapsed_sec", "tol_outer", "tol_inner_base", "tol_inner_floor")
+}
 print(time_summary)
 write.csv(time_summary, "time_method_summary.csv", row.names = FALSE)
 
@@ -1685,12 +2466,22 @@ lambda_summary_all <- bind_rows_safe(lambda_summary_tables)
 pn_outer_trace_all <- bind_rows_safe(pn_outer_trace_tables)
 pn_inner_trace_all <- bind_rows_safe(pn_inner_trace_tables)
 pn_outer_inner_map_all <- bind_rows_safe(pn_outer_inner_map_tables)
+pn_adaptive_tol_refinement_trace_all <- bind_rows_safe(pn_refinement_tables)
+pn_omega_admm_mode_summary_all <- bind_rows_safe(pn_omega_mode_tables)
+pg_omega_admm_mode_summary_all <- bind_rows_safe(pg_omega_mode_tables)
+oracle_pn_100iter_loss_summary_all <- bind_rows_safe(oracle_loss_tables)
+oracle_pn_100iter_nondecrease_counts_all <- bind_rows_safe(oracle_nondec_tables)
 run_config_snapshot_all <- bind_rows_safe(config_snapshot_tables)
 
 write.csv(lambda_summary_all, "lambda_summary_all.csv", row.names = FALSE)
 write.csv(pn_outer_trace_all, "pn_outer_trace_all.csv", row.names = FALSE)
 write.csv(pn_inner_trace_all, "pn_inner_trace_all.csv", row.names = FALSE)
 write.csv(pn_outer_inner_map_all, "pn_outer_inner_map_all.csv", row.names = FALSE)
+write.csv(pn_adaptive_tol_refinement_trace_all, "pn_adaptive_tol_refinement_trace.csv", row.names = FALSE)
+write.csv(pn_omega_admm_mode_summary_all, "pn_omega_admm_mode_summary.csv", row.names = FALSE)
+write.csv(pg_omega_admm_mode_summary_all, "pg_omega_admm_mode_summary.csv", row.names = FALSE)
+write.csv(oracle_pn_100iter_loss_summary_all, "oracle_pn_100iter_loss_summary.csv", row.names = FALSE)
+write.csv(oracle_pn_100iter_nondecrease_counts_all, "oracle_pn_100iter_nondecrease_counts.csv", row.names = FALSE)
 write.csv(run_config_snapshot_all, "run_config_snapshot_all.csv", row.names = FALSE)
 
 saveRDS(list(
@@ -1698,5 +2489,10 @@ saveRDS(list(
   pn_outer_trace_all = pn_outer_trace_all,
   pn_inner_trace_all = pn_inner_trace_all,
   pn_outer_inner_map_all = pn_outer_inner_map_all,
+  pn_adaptive_tol_refinement_trace_all = pn_adaptive_tol_refinement_trace_all,
+  pn_omega_admm_mode_summary_all = pn_omega_admm_mode_summary_all,
+  pg_omega_admm_mode_summary_all = pg_omega_admm_mode_summary_all,
+  oracle_pn_100iter_loss_summary_all = oracle_pn_100iter_loss_summary_all,
+  oracle_pn_100iter_nondecrease_counts_all = oracle_pn_100iter_nondecrease_counts_all,
   run_config_snapshot_all = run_config_snapshot_all
 ), file = "pn_diagnostics_all.rds")

@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PN vs PG Simulation Study (tol=1e-04)</title>
+  <style>
+    :root { --bg:#f7f7f7; --ink:#1f2937; --muted:#4b5563; --card:#fff; --line:#d1d5db; }
+    body { margin:0; font-family:"Segoe UI",Tahoma,Geneva,Verdana,sans-serif; color:var(--ink); background:var(--bg); line-height:1.45; }
+    .wrap { max-width:1200px; margin:0 auto; padding:24px; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:16px; }
+    .mono { font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace; font-size:0.95rem; }
+    table { width:100%; border-collapse:collapse; }
+    th, td { border:1px solid var(--line); padding:8px 10px; text-align:left; font-size:0.95rem; }
+    th { background:#ecfeff; }
+    .plot-card { border:1px solid var(--line); border-radius:8px; padding:10px; background:#fff; margin-bottom:12px; }
+    .plot-card img { width:100%; height:auto; display:block; border-radius:6px; }
+    .caption { margin:8px 0 0 0; color:var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>PN vs PG Simulation Study (tol = 1e-04)</h1>
+    <p class="caption">Generated: <span class="mono">2026-03-04 21:33:23 CST</span></p>
+    <div class="card">
+      <h2>Settings</h2>
+      <ul>
+        <li>Outer tolerance: <span class="mono">tol_PN_sub = tol_PG_sub = 1e-4</span>.</li>
+        <li>Inner tolerance: base <span class="mono">1e-5</span>, floor <span class="mono">1e-8</span>.</li>
+        <li>Outer max iterations: <span class="mono">1000</span> for PN and PG.</li>
+        <li>PG minimum outer iterations: <span class="mono">100</span> (fixed-100 then stop checks).</li>
+        <li>Configured PG max iterations: <span class="mono">1000</span>.</li>
+        <li>Oracle handling: reused from existing oracle CSV (no recomputation).</li>
+        <li>Cases: <span class="mono">relative_change</span>, <span class="mono">oracle_change</span>, <span class="mono">local_norm/l2_step_norm</span>.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h2>PG Minimum-Iteration Verification</h2>
+      <p class="caption">Source: <span class="mono">lambda_summary_case_*_tol_1e-04.csv</span></p>
+      <table>
+        <thead><tr><th>Case</th><th>Configured PG min_iter</th><th>Observed PG min outer_iters</th><th>Observed PG max outer_iters</th></tr></thead>
+        <tbody>
+<tr><td>case_relative_change</td><td>100</td><td>100</td><td>1000</td></tr>
+<tr><td>case_oracle_change</td><td>100</td><td>100</td><td>1000</td></tr>
+<tr><td>case_norm_mode</td><td>100</td><td>100</td><td>1000</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h2>Total Path Time (seconds)</h2>
+      <p class="caption">Source: <span class="mono">solution_path_time_by_stop_mode_tol_1e-04.csv</span></p>
+      <table>
+        <thead><tr><th>Case</th><th>Method</th><th>Total elapsed (sec)</th><th>tol_outer</th><th>tol_inner_base</th><th>tol_inner_floor</th></tr></thead>
+        <tbody>
+<tr><td>case_relative_change</td><td>Prox-Gradient</td><td>5.206568</td><td>1e-04</td><td>1e-05</td><td>1e-08</td></tr>
+<tr><td>case_relative_change</td><td>Prox-Newton</td><td>129.825047</td><td>1e-04</td><td>1e-05</td><td>1e-08</td></tr>
+<tr><td>case_oracle_change</td><td>Prox-Gradient</td><td>21.780635</td><td>1e-04</td><td>1e-05</td><td>1e-08</td></tr>
+<tr><td>case_oracle_change</td><td>Prox-Newton</td><td>138.406880</td><td>1e-04</td><td>1e-05</td><td>1e-08</td></tr>
+<tr><td>case_norm_mode</td><td>Prox-Gradient</td><td>26.817393</td><td>1e-04</td><td>1e-05</td><td>1e-08</td></tr>
+<tr><td>case_norm_mode</td><td>Prox-Newton</td><td>106.930222</td><td>1e-04</td><td>1e-05</td><td>1e-08</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h2>Plots (6)</h2>
+      <div class="plot-card"><img src="pn_pg_final_loss_vs_loglambda_case_relative_change_tol_1e-04.png" alt="loss relative change" /><p class="caption">Training loss vs log(lambda): case_relative_change</p></div>
+      <div class="plot-card"><img src="pn_pg_iters_vs_loglambda_case_relative_change_tol_1e-04.png" alt="iters relative change" /><p class="caption">Iterations vs log(lambda): case_relative_change</p></div>
+      <div class="plot-card"><img src="pn_pg_final_loss_vs_loglambda_case_oracle_change_tol_1e-04.png" alt="loss oracle change" /><p class="caption">Training loss vs log(lambda): case_oracle_change</p></div>
+      <div class="plot-card"><img src="pn_pg_iters_vs_loglambda_case_oracle_change_tol_1e-04.png" alt="iters oracle change" /><p class="caption">Iterations vs log(lambda): case_oracle_change</p></div>
+      <div class="plot-card"><img src="pn_pg_final_loss_vs_loglambda_case_norm_mode_tol_1e-04.png" alt="loss norm mode" /><p class="caption">Training loss vs log(lambda): case_norm_mode</p></div>
+      <div class="plot-card"><img src="pn_pg_iters_vs_loglambda_case_norm_mode_tol_1e-04.png" alt="iters norm mode" /><p class="caption">Iterations vs log(lambda): case_norm_mode</p></div>
+    </div>
+  </div>
+</body>
+</html>

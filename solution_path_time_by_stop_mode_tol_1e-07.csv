@@ -1,0 +1,7 @@
+"case","method","total_elapsed_sec","tol_outer","tol_inner_base","tol_inner_floor"
+"case_relative_change","Prox-Gradient",0.697471618652344,1e-07,1e-08,1e-10
+"case_relative_change","Prox-Newton",0.934948682785034,1e-07,1e-08,1e-10
+"case_oracle_change","Prox-Gradient",0.733456611633301,1e-07,1e-08,1e-10
+"case_oracle_change","Prox-Newton",0.937785387039185,1e-07,1e-08,1e-10
+"case_norm_mode","Prox-Gradient",0.69584059715271,1e-07,1e-08,1e-10
+"case_norm_mode","Prox-Newton",0.954797744750977,1e-07,1e-08,1e-10
