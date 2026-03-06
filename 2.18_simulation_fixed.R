@@ -212,6 +212,10 @@ get_default_sim_config <- function() {
   pg_omega_mode <- Sys.getenv("PG_OMEGA_STOP_MODE", unset = "current")
   pn_omega_mode <- Sys.getenv("PN_OMEGA_STOP_MODE", unset = "duality_gap")
   pn_sub_mode <- Sys.getenv("PN_SUB_ADMM_STOP_MODE", unset = "residual_plus_proxy")
+  pg_target_mode <- Sys.getenv("PG_TARGET_MODE", unset = "pn_final_loss")
+  pg_target_maxit <- get_env_numeric("PG_TARGET_MAXIT", 10000L, integer = TRUE)
+  pg_target_eps <- get_env_numeric("PG_TARGET_EPS", 1e-12)
+  pg_target_use_stop <- get_env_numeric("PG_TARGET_USE_PG_STOP_MODES", 0L, integer = TRUE)
 
   list(
     simulation = list(
@@ -243,6 +247,12 @@ get_default_sim_config <- function() {
       stop_modes = c("relative_change", "oracle_change", "l2_step_norm"),
       stop_logic = "any",
       l2_norm_tol = solver_tol
+    ),
+    pg_target = list(
+      mode = pg_target_mode,
+      max_iter = as.integer(max(1L, pg_target_maxit)),
+      target_eps = max(pg_target_eps, 0),
+      use_pg_stop_modes = as.logical(pg_target_use_stop > 0)
     ),
     outer_pn = list(
       max_iter = solver_maxit,
@@ -995,6 +1005,205 @@ pg_sparse_mvreg <- function(Xc, Y, lambda_gamma, lambda_Omega,
 }
 
 ## =========================================================
+##  Prox-Gradient to PN-reference target loss
+## =========================================================
+
+pg_sparse_mvreg_to_target <- function(Xc, Y, lambda_gamma, lambda_Omega,
+                                      target_loss,
+                                      gamma_init = NULL, Omega_init = NULL,
+                                      max_iter = 10000L, L0 = 1,
+                                      track_loss = TRUE,
+                                      ctrl = NULL, warm_state = NULL,
+                                      target_eps = NULL,
+                                      cfg = SIM_CONFIG) {
+  if (is.null(target_loss) || !is.finite(target_loss)) {
+    stop("target_loss must be a finite numeric value")
+  }
+
+  pg_target_cfg <- if (!is.null(cfg$pg_target)) cfg$pg_target else list()
+  if (!is.null(cfg$outer_pg)) {
+    L0 <- cfg$outer_pg$L0
+  }
+  if (!is.null(pg_target_cfg$max_iter)) {
+    max_iter <- as.integer(pg_target_cfg$max_iter)
+  }
+  if (!is.null(ctrl)) {
+    if (!is.null(ctrl$lambda$gamma)) lambda_gamma <- ctrl$lambda$gamma
+    if (!is.null(ctrl$lambda$Omega)) lambda_Omega <- ctrl$lambda$Omega
+    if (!is.null(ctrl$maxit)) max_iter <- as.integer(ctrl$maxit)
+    if (!is.null(ctrl$L0)) L0 <- ctrl$L0
+    if (!is.null(ctrl$target_eps)) target_eps <- ctrl$target_eps
+  }
+  if (!is.finite(max_iter) || is.na(max_iter) || max_iter < 1L) max_iter <- 1L
+  max_iter <- as.integer(max_iter)
+
+  if (is.null(target_eps)) {
+    target_eps <- if (!is.null(pg_target_cfg$target_eps)) pg_target_cfg$target_eps else 1e-12
+  }
+  if (!is.finite(target_eps) || is.na(target_eps)) target_eps <- 1e-12
+  target_eps <- max(target_eps, 0)
+
+  pg_omega_cfg <- cfg$omega_prox_admm_pg
+  n <- nrow(Xc); p <- ncol(Xc); q <- ncol(Y)
+  Sxx <- crossprod(Xc) / n
+  Sxy <- crossprod(Xc, Y) / n
+  Syy <- crossprod(Y) / n
+
+  gamma <- if (is.null(gamma_init)) matrix(0, p, q) else gamma_init
+  Omega <- if (is.null(Omega_init)) diag(q) else symmetrize(Omega_init)
+  Oinv <- safe_inv_psd(Omega)
+
+  t0 <- Sys.time()
+  loss_curr <- loss_fn(gamma, Omega, Sxx, Sxy, Syy, n,
+                       lambda_gamma, lambda_Omega, Oinv = Oinv)
+
+  if (track_loss) {
+    loss_hist <- numeric(max_iter + 1L)
+    time_hist <- numeric(max_iter + 1L)
+    loss_hist[1] <- loss_curr
+    time_hist[1] <- 0
+  }
+
+  L_prev <- L0
+  target_reached <- FALSE
+  stop_reason <- NA_character_
+  backtrack_stalls <- 0L
+  pg_psd_state <- if (!is.null(warm_state) && !is.null(warm_state$psd_state)) warm_state$psd_state else NULL
+  m_last <- 0L
+
+  if (loss_curr < target_loss - target_eps) {
+    target_reached <- TRUE
+    stop_reason <- "target_reached"
+  }
+
+  if (!target_reached) {
+    for (m in seq_len(max_iter)) {
+      m_last <- m
+      Lm <- L_prev
+      accepted_step <- FALSE
+      backtracking_failed <- FALSE
+      bt_iter <- 0L
+
+      repeat {
+        bt_iter <- bt_iter + 1L
+        if (bt_iter > 100L) {
+          backtrack_stalls <- backtrack_stalls + 1L
+          L_prev <- Lm
+          backtracking_failed <- TRUE
+          break
+        }
+        Gg_m <- grad_gamma(gamma, Omega, Sxx, Sxy, Oinv = Oinv)
+        Go_m <- grad_Omega(gamma, Omega, Sxx, Sxy, Syy, Oinv = Oinv)
+
+        Vg_m <- gamma - Gg_m / Lm
+        Vo_m <- symmetrize(Omega - Go_m / Lm)
+
+        s_gamma_m <- soft_thresh(Vg_m, lambda_gamma / Lm)
+        s_gamma_m[1, ] <- Vg_m[1, ]
+
+        s_Omega_m <- prox_psd_offdiag_l1(
+          Vo_m,
+          tau = lambda_Omega / Lm,
+          cfg_omega_admm = pg_omega_cfg,
+          Omega_init = if (is.null(pg_psd_state)) Omega else pg_psd_state$Omega,
+          A_init = if (is.null(pg_psd_state)) NULL else pg_psd_state$A
+        )
+        pg_psd_state <- attr(s_Omega_m, "state")
+
+        d_gamma_m <- s_gamma_m - gamma
+        d_Omega_m <- s_Omega_m - Omega
+
+        lambda_m <- local_norm(d_gamma_m, d_Omega_m, gamma, Omega, Sxx, Oinv = Oinv)
+        beta_m <- sqrt(Lm) * sqrt(sum(d_gamma_m^2) + sum(d_Omega_m^2))
+
+        if (lambda_m^2 / max(beta_m^2, .Machine$double.eps) + lambda_m > 1) {
+          Lm <- 2 * Lm
+          next
+        }
+
+        alpha_m <- if (lambda_m <= .Machine$double.eps) {
+          1
+        } else {
+          (beta_m^2) / (lambda_m * (lambda_m + beta_m^2))
+        }
+        gamma_candidate <- gamma + alpha_m * d_gamma_m
+        Omega_candidate <- symmetrize(Omega + alpha_m * d_Omega_m)
+
+        Oinv_try <- tryCatch(safe_inv_psd(Omega_candidate), error = function(e) NULL)
+        if (is.null(Oinv_try)) {
+          backtrack_stalls <- backtrack_stalls + 1L
+          L_prev <- Lm
+          backtracking_failed <- TRUE
+          break
+        }
+
+        loss_try <- loss_fn(gamma_candidate, Omega_candidate, Sxx, Sxy, Syy, n,
+                            lambda_gamma, lambda_Omega, Oinv = Oinv_try)
+        if (!is.finite(loss_try)) {
+          backtrack_stalls <- backtrack_stalls + 1L
+          L_prev <- Lm
+          backtracking_failed <- TRUE
+          break
+        }
+
+        gamma <- gamma_candidate
+        Omega <- Omega_candidate
+        Oinv <- Oinv_try
+        loss_curr <- loss_try
+        L_prev <- Lm
+        accepted_step <- TRUE
+        break
+      }
+
+      if (track_loss) {
+        loss_hist[m + 1L] <- loss_curr
+        time_hist[m + 1L] <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
+      }
+
+      if (accepted_step && loss_curr < target_loss - target_eps) {
+        target_reached <- TRUE
+        stop_reason <- "target_reached"
+        break
+      }
+      if (backtracking_failed) {
+        stop_reason <- "backtracking_stall"
+        break
+      }
+    }
+  }
+
+  if (is.na(stop_reason)) {
+    stop_reason <- if (target_reached) "target_reached" else "max_iter_no_target"
+  }
+
+  elapsed_time_sec <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
+  out <- list(
+    gamma = gamma,
+    Omega = Omega,
+    iters = m_last,
+    iters_to_target_or_stop = m_last,
+    converged = target_reached,
+    target_reached = target_reached,
+    target_loss_ref = target_loss,
+    target_eps = target_eps,
+    stop_reason = stop_reason,
+    elapsed_time_sec = elapsed_time_sec,
+    elapsed_sec_to_target_or_stop = elapsed_time_sec,
+    Sxx = Sxx,
+    Sxy = Sxy,
+    Syy = Syy,
+    n = n,
+    backtrack_stalls = backtrack_stalls,
+    psd_state = pg_psd_state
+  )
+  if (track_loss) {
+    out$loss_hist <- loss_hist[1:(m_last + 1L)]
+    out$time_hist <- time_hist[1:(m_last + 1L)]
+  }
+  out
+}
+
+## =========================================================
 ##  Prox-Newton subproblem ADMM
 ## =========================================================
 
@@ -1630,6 +1839,77 @@ run_pg_path <- function(data_list, ctrl, ref_path = NULL,
   results
 }
 
+run_pg_path_to_pn_targets <- function(data_list, ctrl, pn_target_loss_vec,
+                                      ref_path = NULL,
+                                      warm_starts = NULL,
+                                      cfg = SIM_CONFIG) {
+  lambda_path <- data_list$lambda_path
+  n_path <- nrow(lambda_path)
+  if (length(pn_target_loss_vec) != n_path) {
+    stop("pn_target_loss_vec length mismatch")
+  }
+  gamma_init <- data_list$gamma_init
+  Omega_init <- data_list$Omega_init
+  warm_state <- NULL
+  use_shared_warm <- !is.null(warm_starts)
+  if (use_shared_warm && length(warm_starts) != n_path) {
+    stop("warm_starts length mismatch")
+  }
+  results <- vector("list", n_path)
+
+  for (i in seq_len(n_path)) {
+    cat(sprintf("[PG-target path] step %d/%d\n", i, n_path))
+    flush.console()
+    ctrl_i <- ctrl
+    ctrl_i$lambda$gamma <- lambda_path$lambda_gamma[i]
+    ctrl_i$lambda$Omega <- lambda_path$lambda_Omega[i]
+
+    if (use_shared_warm) {
+      gamma_init_step <- warm_starts[[i]]$gamma
+      Omega_init_step <- warm_starts[[i]]$Omega
+      warm_state_step <- NULL
+    } else {
+      gamma_init_step <- gamma_init
+      Omega_init_step <- Omega_init
+      warm_state_step <- warm_state
+      if (i == 1 && !is.null(ref_path) && length(ref_path) >= 1) {
+        seed_fit <- ref_path[[1]]
+        if (!is.null(seed_fit$gamma)) gamma_init_step <- seed_fit$gamma
+        if (!is.null(seed_fit$Omega)) Omega_init_step <- seed_fit$Omega
+        if (!is.null(seed_fit$psd_state)) warm_state_step <- list(psd_state = seed_fit$psd_state)
+      }
+    }
+
+    fit <- pg_sparse_mvreg_to_target(
+      data_list$X, data_list$Y,
+      lambda_path$lambda_gamma[i],
+      lambda_path$lambda_Omega[i],
+      target_loss = pn_target_loss_vec[i],
+      gamma_init = gamma_init_step,
+      Omega_init = Omega_init_step,
+      max_iter = ctrl$maxit,
+      L0 = ctrl$L0,
+      track_loss = TRUE,
+      ctrl = ctrl_i,
+      warm_state = warm_state_step,
+      target_eps = if (!is.null(cfg$pg_target$target_eps)) cfg$pg_target$target_eps else 1e-12,
+      cfg = cfg
+    )
+
+    fit$lambda_gamma <- lambda_path$lambda_gamma[i]
+    fit$lambda_Omega <- lambda_path$lambda_Omega[i]
+    fit$path_index <- lambda_path$step[i]
+    results[[i]] <- fit
+
+    if (!use_shared_warm) {
+      gamma_init <- fit$gamma
+      Omega_init <- fit$Omega
+      warm_state <- list(psd_state = fit$psd_state)
+    }
+  }
+  results
+}
+
 run_pn_path <- function(data_list, ctrl,
                         warm_starts = NULL,
                         oracle_vec = NULL, gap_tol = NULL, use_relative_gap = FALSE,
@@ -2063,7 +2343,8 @@ build_pg_omega_mode_summary <- function(pg_path, solver_tol) {
 }
 
 build_run_config_snapshot <- function(cfg, solver_tol,
-                                      gap_tol, use_oracle, use_relative_gap) {
+                                      gap_tol, use_oracle, use_relative_gap,
+                                      run_profile = "default") {
   sim <- cfg$simulation
   lam <- cfg$lambda_path
   pg <- cfg$outer_pg
@@ -2072,7 +2353,9 @@ build_run_config_snapshot <- function(cfg, solver_tol,
   pg_omega <- cfg$omega_prox_admm_pg
   pn_omega <- cfg$omega_prox_admm_pn
   num <- cfg$numerics
+  pg_target <- if (!is.null(cfg$pg_target)) cfg$pg_target else list()
   data.frame(
+    run_profile = run_profile,
     seed = shared_seed,
     n = sim$n,
     p = sim$p,
@@ -2088,6 +2371,10 @@ build_run_config_snapshot <- function(cfg, solver_tol,
     solver_tol = solver_tol,
     max_iter_PG_outer = pg$max_iter,
     min_iter_PG_outer = pg$min_iter,
+    pg_target_mode = if (!is.null(pg_target$mode)) pg_target$mode else NA_character_,
+    pg_target_max_iter = if (!is.null(pg_target$max_iter)) pg_target$max_iter else NA_real_,
+    pg_target_eps = if (!is.null(pg_target$target_eps)) pg_target$target_eps else NA_real_,
+    pg_target_use_pg_stop_modes = if (!is.null(pg_target$use_pg_stop_modes)) pg_target$use_pg_stop_modes else NA,
     max_iter_PN_outer = pn$max_iter,
     tol_PG_sub = pg$tol_PG_sub,
     tol_PN_sub = pn$tol_PN_sub,
@@ -2144,6 +2431,897 @@ format_tol_tag <- function(tol) {
   gsub("\\.", "p", tag)
 }
 
+detect_gpu_backend <- function() {
+  pkg_names <- tryCatch(rownames(installed.packages()), error = function(e) character(0))
+  has_pkg <- function(candidates) any(candidates %in% pkg_names)
+
+  out <- list(
+    available = FALSE,
+    backend = "none",
+    device_name = NA_character_,
+    details = NA_character_,
+    supported_package = FALSE
+  )
+
+  nvidia_bin <- Sys.which("nvidia-smi")
+  if (nzchar(nvidia_bin)) {
+    cuda_info <- tryCatch(
+      system2(
+        nvidia_bin,
+        c("--query-gpu=name,memory.total,driver_version", "--format=csv,noheader"),
+        stdout = TRUE,
+        stderr = FALSE
+      ),
+      error = function(e) character(0)
+    )
+    if (length(cuda_info) > 0) {
+      out$backend <- "cuda"
+      out$device_name <- trimws(cuda_info[1])
+      out$details <- paste(cuda_info, collapse = " | ")
+      out$supported_package <- has_pkg(c("torch", "tensorflow", "keras", "cuda.ml", "gpuR", "xgboost"))
+      out$available <- isTRUE(out$supported_package)
+      if (isTRUE(out$available)) return(out)
+    }
+  }
+
+  if (tolower(Sys.info()[["sysname"]]) == "darwin") {
+    display_info <- tryCatch(
+      system2("system_profiler", "SPDisplaysDataType", stdout = TRUE, stderr = FALSE),
+      error = function(e) character(0)
+    )
+    has_metal <- any(grepl("Metal Support", display_info, fixed = TRUE))
+    if (isTRUE(has_metal)) {
+      chipset_lines <- display_info[grepl("Chipset Model:", display_info, fixed = TRUE)]
+      cores_lines <- display_info[grepl("Total Number of Cores:", display_info, fixed = TRUE)]
+      metal_lines <- display_info[grepl("Metal Support:", display_info, fixed = TRUE)]
+      device_name <- if (length(chipset_lines) > 0) {
+        trimws(sub(".*Chipset Model:\\s*", "", chipset_lines[1]))
+      } else {
+        "Apple GPU"
+      }
+      detail_lines <- c(chipset_lines[1], cores_lines[1], metal_lines[1])
+      detail_lines <- detail_lines[!is.na(detail_lines) & nzchar(detail_lines)]
+      out$backend <- "metal"
+      out$device_name <- device_name
+      out$details <- if (length(detail_lines) > 0) paste(trimws(detail_lines), collapse = " | ") else "Metal detected"
+      out$supported_package <- has_pkg(c("torch", "tensorflow", "keras"))
+      out$available <- isTRUE(out$supported_package)
+      if (isTRUE(out$available)) return(out)
+    }
+  }
+
+  out
+}
+
+configure_compute_resources <- function(compute_mode = "hybrid_auto", max_cpu_threads = NULL) {
+  if (is.null(max_cpu_threads) || !is.finite(max_cpu_threads) || is.na(max_cpu_threads)) {
+    max_cpu_threads <- parallel::detectCores(logical = TRUE)
+  }
+  max_cpu_threads <- as.integer(max(1L, as.integer(max_cpu_threads)))
+
+  Sys.setenv(
+    VECLIB_MAXIMUM_THREADS = as.character(max_cpu_threads),
+    OMP_NUM_THREADS = as.character(max_cpu_threads),
+    OPENBLAS_NUM_THREADS = as.character(max_cpu_threads),
+    MKL_NUM_THREADS = as.character(max_cpu_threads)
+  )
+  options(mc.cores = max_cpu_threads)
+
+  if (requireNamespace("RhpcBLASctl", quietly = TRUE)) {
+    tryCatch(RhpcBLASctl::blas_set_num_threads(max_cpu_threads), error = function(e) NULL)
+    tryCatch(RhpcBLASctl::omp_set_num_threads(max_cpu_threads), error = function(e) NULL)
+  }
+
+  mode <- tolower(trimws(if (is.null(compute_mode)) "hybrid_auto" else compute_mode))
+  if (!mode %in% c("hybrid_auto", "cpu_only")) {
+    warning(sprintf("Unknown COMPUTE_MODE '%s'; using 'hybrid_auto'.", mode))
+    mode <- "hybrid_auto"
+  }
+
+  gpu_info <- detect_gpu_backend()
+  gpu_enabled <- isTRUE(mode == "hybrid_auto" && gpu_info$available)
+  if (isTRUE(mode == "hybrid_auto" && !gpu_enabled)) {
+    cat("[compute] GPU unavailable -> CPU-only execution\n")
+  }
+  if (isTRUE(mode == "cpu_only")) {
+    cat("[compute] CPU-only mode requested\n")
+  }
+  cat(sprintf(
+    "[compute] mode=%s | cpu_threads=%d | gpu_backend=%s | gpu_enabled=%s\n",
+    mode,
+    max_cpu_threads,
+    gpu_info$backend,
+    ifelse(gpu_enabled, "TRUE", "FALSE")
+  ))
+  if (isTRUE(gpu_enabled)) {
+    cat(sprintf("[compute] GPU detected: %s\n", gpu_info$device_name))
+  } else if (!is.na(gpu_info$details)) {
+    cat(sprintf("[compute] GPU probe details: %s\n", gpu_info$details))
+  }
+  flush.console()
+
+  list(
+    compute_mode = mode,
+    max_cpu_threads = max_cpu_threads,
+    gpu_enabled = gpu_enabled,
+    gpu_info = gpu_info
+  )
+}
+
+ensure_data_frame <- function(df) {
+  if (is.null(df)) data.frame(stringsAsFactors = FALSE) else df
+}
+
+add_case_column <- function(df, case_name) {
+  df <- ensure_data_frame(df)
+  if (nrow(df) == 0) {
+    df$case <- character(0)
+  } else {
+    df$case <- case_name
+  }
+  df
+}
+
+run_case_norm_once <- function(data_list, cfg, tol_outer, tol_inner_base, tol_inner_floor, max_iter_outer = 10000L) {
+  cfg_case <- cfg
+  cfg_case$outer_pn$max_iter <- as.integer(max_iter_outer)
+  cfg_case$outer_pg$max_iter <- as.integer(max_iter_outer)
+  cfg_case$outer_pn$tol_PN_sub <- tol_outer
+  cfg_case$outer_pg$tol_PG_sub <- tol_outer
+  cfg_case$outer_pg$tol_obj <- tol_outer
+  cfg_case$outer_pg$tol_gm <- tol_outer
+  cfg_case$outer_pg$l2_norm_tol <- tol_outer
+  cfg_case$outer_pn$stop_modes <- c("local_norm")
+  cfg_case$outer_pn$stop_logic <- "any"
+  cfg_case$outer_pg$stop_modes <- c("l2_step_norm")
+  cfg_case$outer_pg$stop_logic <- "any"
+  cfg_case$pn_subproblem_admm$tol_PN_ADMM_base <- tol_inner_base
+  cfg_case$pn_subproblem_admm$tol_PN_ADMM_floor <- tol_inner_floor
+  cfg_case$omega_prox_admm_pn$tol_Omega_ADMM <- tol_inner_base
+  cfg_case$omega_prox_admm_pn$tol_Omega_ADMM_floor <- tol_inner_floor
+  cfg_case$omega_prox_admm_pg$tol_Omega_ADMM <- tol_inner_base
+  cfg_case$omega_prox_admm_pg$tol_Omega_ADMM_floor <- tol_inner_floor
+  set_numeric_controls(cfg_case)
+
+  ctrl_case <- list(
+    lambda = list(
+      gamma = data_list$lambda_path$lambda_gamma[1],
+      Omega = data_list$lambda_path$lambda_Omega[1]
+    ),
+    maxit = as.integer(max_iter_outer),
+    tol = tol_outer,
+    L0 = cfg_case$outer_pg$L0,
+    stop_modes = cfg_case$outer_pg$stop_modes,
+    stop_logic = cfg_case$outer_pg$stop_logic,
+    l2_norm_tol = cfg_case$outer_pg$l2_norm_tol
+  )
+
+  res <- benchmark_pg_vs_pn(
+    data_list,
+    ctrl_case,
+    use_oracle = FALSE,
+    gap_tol = cfg_case$benchmark$gap_tol_mode,
+    use_relative_gap = cfg_case$benchmark$use_relative_gap_mode,
+    ctrl_oracle = NULL,
+    track_pn_diagnostics = TRUE,
+    cfg = cfg_case,
+    oracle_vals_override = NULL
+  )
+  res$path_summary$solver_tol <- tol_outer
+  res$path_summary$case <- "case_norm_mode"
+
+  lambda_summary <- build_lambda_summary(res, tol_outer)
+  lambda_summary <- add_case_column(lambda_summary, "case_norm_mode")
+  config_snapshot <- build_run_config_snapshot(
+    cfg = cfg_case,
+    solver_tol = tol_outer,
+    gap_tol = if (is.null(cfg_case$benchmark$gap_tol_mode)) NA_real_ else cfg_case$benchmark$gap_tol_mode,
+    use_oracle = FALSE,
+    use_relative_gap = cfg_case$benchmark$use_relative_gap_mode,
+    run_profile = "norm_mode_tasks"
+  )
+  config_snapshot <- add_case_column(config_snapshot, "case_norm_mode")
+
+  meta <- list(
+    case = "case_norm_mode",
+    tol_outer = tol_outer,
+    tol_inner_base = tol_inner_base,
+    tol_inner_floor = tol_inner_floor,
+    max_iter_outer = as.integer(max_iter_outer),
+    tol_tag = format_tol_tag(tol_outer),
+    inner_tag = format_tol_tag(tol_inner_base)
+  )
+
+  list(
+    res = res,
+    cfg = cfg_case,
+    meta = meta,
+    lambda_summary = lambda_summary,
+    config_snapshot = config_snapshot
+  )
+}
+
+build_pn_outer_iter_frequency <- function(pn_outer_iters) {
+  if (length(pn_outer_iters) == 0) {
+    return(data.frame(
+      pn_outer_iters = integer(0),
+      path_count = integer(0),
+      path_fraction = numeric(0),
+      stringsAsFactors = FALSE
+    ))
+  }
+  tab <- table(as.integer(pn_outer_iters))
+  out <- data.frame(
+    pn_outer_iters = as.integer(names(tab)),
+    path_count = as.integer(tab),
+    stringsAsFactors = FALSE
+  )
+  out <- out[order(out$pn_outer_iters), , drop = FALSE]
+  out$path_fraction <- out$path_count / sum(out$path_count)
+  out
+}
+
+build_pg_target_time_tables <- function(pn_reference_df, pg_target_df,
+                                        tol_outer, tol_inner_base, tol_inner_floor,
+                                        max_iter_pg_target) {
+  per_path <- merge(
+    pn_reference_df[, c("path_index", "lambda_gamma", "lambda_Omega", "pn_elapsed_sec"), drop = FALSE],
+    pg_target_df[, c("path_index", "pg_elapsed_sec", "pg_target_reached"), drop = FALSE],
+    by = "path_index",
+    all = TRUE,
+    sort = TRUE
+  )
+  per_path <- per_path[order(per_path$path_index), , drop = FALSE]
+  per_path$tol_outer <- tol_outer
+  per_path$tol_inner_base <- tol_inner_base
+  per_path$tol_inner_floor <- tol_inner_floor
+
+  total_df <- data.frame(
+    method = c("PN", "PG"),
+    total_elapsed_sec = c(
+      sum(per_path$pn_elapsed_sec, na.rm = TRUE),
+      sum(per_path$pg_elapsed_sec, na.rm = TRUE)
+    ),
+    tol_outer = tol_outer,
+    tol_inner_base = tol_inner_base,
+    tol_inner_floor = tol_inner_floor,
+    max_iter_pg_target = as.integer(max_iter_pg_target),
+    stringsAsFactors = FALSE
+  )
+
+  list(per_path = per_path, total = total_df)
+}
+
+run_pn_first_pg_target_profile <- function(data_list = shared_data, cfg_base = SIM_CONFIG) {
+  compute_mode <- Sys.getenv("COMPUTE_MODE", unset = "hybrid_auto")
+  max_cpu_threads <- get_env_numeric(
+    "MAX_CPU_THREADS",
+    parallel::detectCores(logical = TRUE),
+    integer = TRUE
+  )
+  compute_info <- configure_compute_resources(compute_mode = compute_mode, max_cpu_threads = max_cpu_threads)
+
+  tol_outer <- 1e-4
+  tol_inner_base <- 1e-5
+  tol_inner_floor <- 1e-8
+  max_iter_pg_target <- 10000L
+  target_eps <- 1e-12
+
+  cfg_case <- cfg_base
+  cfg_case$outer_pn$tol_PN_sub <- tol_outer
+  cfg_case$outer_pn$stop_modes <- c("local_norm")
+  cfg_case$outer_pn$stop_logic <- "any"
+  cfg_case$outer_pg$tol_PG_sub <- tol_outer
+  cfg_case$outer_pg$tol_obj <- tol_outer
+  cfg_case$outer_pg$tol_gm <- tol_outer
+  cfg_case$outer_pg$l2_norm_tol <- tol_outer
+  cfg_case$outer_pg$stop_modes <- c("l2_step_norm")
+  cfg_case$outer_pg$stop_logic <- "any"
+  cfg_case$pn_subproblem_admm$tol_PN_ADMM_base <- tol_inner_base
+  cfg_case$pn_subproblem_admm$tol_PN_ADMM_floor <- tol_inner_floor
+  cfg_case$omega_prox_admm_pn$tol_Omega_ADMM <- tol_inner_base
+  cfg_case$omega_prox_admm_pn$tol_Omega_ADMM_floor <- tol_inner_floor
+  cfg_case$omega_prox_admm_pg$tol_Omega_ADMM <- tol_inner_base
+  cfg_case$omega_prox_admm_pg$tol_Omega_ADMM_floor <- tol_inner_floor
+  cfg_case$pg_target$mode <- "pn_final_loss"
+  cfg_case$pg_target$max_iter <- as.integer(max_iter_pg_target)
+  cfg_case$pg_target$target_eps <- target_eps
+  cfg_case$pg_target$use_pg_stop_modes <- FALSE
+  set_numeric_controls(cfg_case)
+
+  ctrl_pn <- list(
+    lambda = list(
+      gamma = data_list$lambda_path$lambda_gamma[1],
+      Omega = data_list$lambda_path$lambda_Omega[1]
+    ),
+    maxit = as.integer(cfg_case$outer_pn$max_iter),
+    tol = tol_outer,
+    L0 = cfg_case$outer_pg$L0
+  )
+
+  pn_path <- run_pn_path(
+    data_list,
+    ctrl_pn,
+    warm_starts = NULL,
+    oracle_vec = NULL,
+    gap_tol = NULL,
+    use_relative_gap = FALSE,
+    track_diagnostics = FALSE,
+    cfg = cfg_case
+  )
+  pn_reference_df <- bind_rows_safe(lapply(pn_path, function(fit) {
+    data.frame(
+      path_index = fit$path_index,
+      lambda_gamma = fit$lambda_gamma,
+      lambda_Omega = fit$lambda_Omega,
+      pn_final_loss = tail(fit$loss_hist, 1),
+      pn_outer_iters = fit$iters,
+      pn_elapsed_sec = fit$elapsed_time_sec,
+      pn_converged = fit$converged,
+      pn_stop_reason = fit$stop_reason,
+      stringsAsFactors = FALSE
+    )
+  }))
+  pn_reference_df <- pn_reference_df[order(pn_reference_df$path_index), , drop = FALSE]
+
+  ctrl_pg_target <- list(
+    lambda = list(
+      gamma = data_list$lambda_path$lambda_gamma[1],
+      Omega = data_list$lambda_path$lambda_Omega[1]
+    ),
+    maxit = as.integer(max_iter_pg_target),
+    L0 = cfg_case$outer_pg$L0,
+    target_eps = target_eps
+  )
+  pg_target_path <- run_pg_path_to_pn_targets(
+    data_list = data_list,
+    ctrl = ctrl_pg_target,
+    pn_target_loss_vec = pn_reference_df$pn_final_loss,
+    cfg = cfg_case
+  )
+  pg_target_df <- bind_rows_safe(lapply(pg_target_path, function(fit) {
+    data.frame(
+      path_index = fit$path_index,
+      lambda_gamma = fit$lambda_gamma,
+      lambda_Omega = fit$lambda_Omega,
+      target_loss_ref = fit$target_loss_ref,
+      pg_final_loss_at_stop = tail(fit$loss_hist, 1),
+      pg_target_reached = fit$target_reached,
+      pg_outer_iters = fit$iters_to_target_or_stop,
+      pg_elapsed_sec = fit$elapsed_sec_to_target_or_stop,
+      pg_stop_reason = fit$stop_reason,
+      pg_converged = fit$converged,
+      stringsAsFactors = FALSE
+    )
+  }))
+  pg_target_df <- pg_target_df[order(pg_target_df$path_index), , drop = FALSE]
+  raw_target_hit <- with(
+    pg_target_df,
+    is.finite(pg_final_loss_at_stop) &
+      is.finite(target_loss_ref) &
+      (pg_final_loss_at_stop < target_loss_ref - target_eps)
+  )
+  pg_target_df$pg_target_reached <- raw_target_hit
+  pg_target_df$pg_converged <- raw_target_hit
+  idx_target_flag <- which(pg_target_df$pg_stop_reason == "target_reached" & !raw_target_hit)
+  if (length(idx_target_flag) > 0) {
+    pg_target_df$pg_stop_reason[idx_target_flag] <- "max_iter_no_target"
+  }
+
+  comparison_df <- merge(
+    pn_reference_df,
+    pg_target_df[, c(
+      "path_index", "target_loss_ref", "pg_final_loss_at_stop", "pg_target_reached",
+      "pg_outer_iters", "pg_elapsed_sec", "pg_stop_reason", "pg_converged"
+    ), drop = FALSE],
+    by = "path_index",
+    all = TRUE,
+    sort = TRUE
+  )
+  comparison_df <- comparison_df[order(comparison_df$path_index), , drop = FALSE]
+  # Use export-formatted numeric precision for strict target flags so CSV checks
+  # match the persisted values exactly.
+  cmp_pg_loss <- as.numeric(format(comparison_df$pg_final_loss_at_stop, digits = 15))
+  cmp_pn_loss <- as.numeric(format(comparison_df$pn_final_loss, digits = 15))
+  strict_export_hit <- is.finite(cmp_pg_loss) &
+    is.finite(cmp_pn_loss) &
+    (cmp_pg_loss < cmp_pn_loss - target_eps)
+  comparison_df$pg_target_reached <- strict_export_hit
+  comparison_df$pg_converged <- strict_export_hit
+  idx_export_flag <- which(comparison_df$pg_stop_reason == "target_reached" & !strict_export_hit)
+  if (length(idx_export_flag) > 0) {
+    comparison_df$pg_stop_reason[idx_export_flag] <- "max_iter_no_target"
+  }
+
+  pg_idx <- match(pg_target_df$path_index, comparison_df$path_index)
+  pg_target_df$pg_target_reached <- comparison_df$pg_target_reached[pg_idx]
+  pg_target_df$pg_converged <- comparison_df$pg_converged[pg_idx]
+  pg_target_df$pg_stop_reason <- comparison_df$pg_stop_reason[pg_idx]
+
+  comparison_df$diff_pg_minus_pn <- comparison_df$pg_final_loss_at_stop - comparison_df$pn_final_loss
+  comparison_df$tol_outer <- tol_outer
+  comparison_df$tol_inner_base <- tol_inner_base
+  comparison_df$tol_inner_floor <- tol_inner_floor
+  comparison_df$max_iter_pg_target <- as.integer(max_iter_pg_target)
+
+  time_tables <- build_pg_target_time_tables(
+    pn_reference_df = pn_reference_df,
+    pg_target_df = pg_target_df,
+    tol_outer = tol_outer,
+    tol_inner_base = tol_inner_base,
+    tol_inner_floor = tol_inner_floor,
+    max_iter_pg_target = max_iter_pg_target
+  )
+
+  pn_freq_df <- build_pn_outer_iter_frequency(pn_reference_df$pn_outer_iters)
+  pn_freq_df$tol_outer <- tol_outer
+  pn_freq_df$tol_inner_base <- tol_inner_base
+  pn_freq_df$tol_inner_floor <- tol_inner_floor
+  if (sum(pn_freq_df$path_count, na.rm = TRUE) != nrow(data_list$lambda_path)) {
+    warning("PN outer-iteration frequency table does not sum to lambda path length")
+  }
+
+  config_snapshot <- build_run_config_snapshot(
+    cfg = cfg_case,
+    solver_tol = tol_outer,
+    gap_tol = NA_real_,
+    use_oracle = FALSE,
+    use_relative_gap = FALSE,
+    run_profile = "pn_first_pg_target"
+  )
+
+  tol_tag <- format_tol_tag(tol_outer)
+  write.csv(
+    pn_reference_df,
+    sprintf("pn_reference_final_loss_case_norm_mode_tol_%s.csv", tol_tag),
+    row.names = FALSE
+  )
+  write.csv(
+    pg_target_df,
+    sprintf("pg_to_pn_target_path_case_norm_mode_tol_%s_max_iter_%d.csv", tol_tag, max_iter_pg_target),
+    row.names = FALSE
+  )
+  write.csv(
+    comparison_df,
+    sprintf("pn_pg_target_comparison_case_norm_mode_tol_%s_max_iter_%d.csv", tol_tag, max_iter_pg_target),
+    row.names = FALSE
+  )
+  write.csv(
+    time_tables$per_path,
+    sprintf("pn_pg_time_per_path_case_norm_mode_tol_%s_max_iter_%d.csv", tol_tag, max_iter_pg_target),
+    row.names = FALSE
+  )
+  write.csv(
+    time_tables$total,
+    sprintf("pn_pg_time_total_case_norm_mode_tol_%s_max_iter_%d.csv", tol_tag, max_iter_pg_target),
+    row.names = FALSE
+  )
+  write.csv(
+    pn_freq_df,
+    sprintf("pn_outer_iter_frequency_case_norm_mode_tol_%s.csv", tol_tag),
+    row.names = FALSE
+  )
+  write.csv(
+    config_snapshot,
+    sprintf("run_config_snapshot_pn_first_pg_target_tol_%s.csv", tol_tag),
+    row.names = FALSE
+  )
+
+  cat("\n=== pn_first_pg_target summary ===\n")
+  cat(sprintf(
+    "compute_mode=%s | cpu_threads=%d | gpu_backend=%s | gpu_enabled=%s\n",
+    compute_info$compute_mode,
+    compute_info$max_cpu_threads,
+    compute_info$gpu_info$backend,
+    ifelse(compute_info$gpu_enabled, "TRUE", "FALSE")
+  ))
+  cat("Task outputs written:\n")
+  cat(sprintf("  - pn_reference_final_loss_case_norm_mode_tol_%s.csv\n", tol_tag))
+  cat(sprintf("  - pg_to_pn_target_path_case_norm_mode_tol_%s_max_iter_%d.csv\n", tol_tag, max_iter_pg_target))
+  cat(sprintf("  - pn_pg_target_comparison_case_norm_mode_tol_%s_max_iter_%d.csv\n", tol_tag, max_iter_pg_target))
+  cat(sprintf("  - pn_pg_time_per_path_case_norm_mode_tol_%s_max_iter_%d.csv\n", tol_tag, max_iter_pg_target))
+  cat(sprintf("  - pn_pg_time_total_case_norm_mode_tol_%s_max_iter_%d.csv\n", tol_tag, max_iter_pg_target))
+  cat(sprintf("  - pn_outer_iter_frequency_case_norm_mode_tol_%s.csv\n", tol_tag))
+  cat(sprintf("  - run_config_snapshot_pn_first_pg_target_tol_%s.csv\n", tol_tag))
+  flush.console()
+
+  invisible(list(
+    cfg = cfg_case,
+    pn_reference = pn_reference_df,
+    pg_target = pg_target_df,
+    comparison = comparison_df,
+    pn_freq = pn_freq_df,
+    time_per_path = time_tables$per_path,
+    time_total = time_tables$total,
+    config_snapshot = config_snapshot,
+    compute = compute_info
+  ))
+}
+
+build_pn_iteration_outputs <- function(res, meta) {
+  add_meta_cols <- function(df) {
+    if (is.null(df)) return(data.frame())
+    df$case <- meta$case
+    df$tol_outer <- meta$tol_outer
+    df$tol_inner_base <- meta$tol_inner_base
+    df$tol_inner_floor <- meta$tol_inner_floor
+    df$max_iter_outer <- meta$max_iter_outer
+    df
+  }
+
+  summary_df <- bind_rows_safe(lapply(res$pn_path, function(fit) {
+    inner_total <- 0
+    if (!is.null(fit$outer_inner_map) && nrow(fit$outer_inner_map) > 0) {
+      inner_total <- sum(fit$outer_inner_map$inner_iters, na.rm = TRUE)
+    }
+    data.frame(
+      path_index = fit$path_index,
+      lambda_gamma = fit$lambda_gamma,
+      lambda_Omega = fit$lambda_Omega,
+      pn_outer_iters = fit$iters,
+      pn_inner_iters_total = inner_total,
+      pn_converged = fit$converged,
+      pn_stop_reason = fit$stop_reason,
+      pn_elapsed_sec = fit$elapsed_time_sec,
+      stringsAsFactors = FALSE
+    )
+  }))
+  summary_df <- add_meta_cols(summary_df)
+
+  detail_df <- bind_rows_safe(lapply(res$pn_path, function(fit) {
+    if (!is.null(fit$outer_trace) && nrow(fit$outer_trace) > 0) {
+      df <- fit$outer_trace[fit$outer_trace$outer_iter > 0,
+                            c("outer_iter", "inner_iters", "inner_converged", "training_loss", "elapsed_sec"),
+                            drop = FALSE]
+    } else if (!is.null(fit$outer_inner_map) && nrow(fit$outer_inner_map) > 0) {
+      df <- fit$outer_inner_map
+      df$training_loss <- NA_real_
+      df$elapsed_sec <- NA_real_
+    } else {
+      return(NULL)
+    }
+    df$path_index <- fit$path_index
+    df$lambda_gamma <- fit$lambda_gamma
+    df$lambda_Omega <- fit$lambda_Omega
+    df
+  }))
+  detail_df <- add_meta_cols(detail_df)
+
+  list(summary = summary_df, detail = detail_df)
+}
+
+build_final_loss_diff_outputs <- function(res, meta) {
+  pn_df <- bind_rows_safe(lapply(res$pn_path, function(fit) {
+    data.frame(
+      path_index = fit$path_index,
+      lambda_gamma = fit$lambda_gamma,
+      lambda_Omega = fit$lambda_Omega,
+      pn_final_loss = tail(fit$loss_hist, 1),
+      pn_converged = fit$converged,
+      stringsAsFactors = FALSE
+    )
+  }))
+  pg_df <- bind_rows_safe(lapply(res$pg_path, function(fit) {
+    data.frame(
+      path_index = fit$path_index,
+      pg_final_loss = tail(fit$loss_hist, 1),
+      pg_converged = fit$converged,
+      stringsAsFactors = FALSE
+    )
+  }))
+
+  out <- merge(pn_df, pg_df, by = "path_index", all = TRUE, sort = TRUE)
+  out <- out[order(out$path_index), , drop = FALSE]
+  out$diff_pg_minus_pn <- out$pg_final_loss - out$pn_final_loss
+  out$abs_diff <- abs(out$diff_pg_minus_pn)
+  out$case <- meta$case
+  out$tol_outer <- meta$tol_outer
+  out$tol_inner_base <- meta$tol_inner_base
+  out$tol_inner_floor <- meta$tol_inner_floor
+  out$max_iter_outer <- meta$max_iter_outer
+  out
+}
+
+collect_method_path_metrics <- function(res, meta) {
+  pn_df <- bind_rows_safe(lapply(res$pn_path, function(fit) {
+    data.frame(
+      path_index = fit$path_index,
+      lambda_gamma = fit$lambda_gamma,
+      lambda_Omega = fit$lambda_Omega,
+      pn_final_loss = tail(fit$loss_hist, 1),
+      pn_converged = fit$converged,
+      pn_elapsed_sec = fit$elapsed_time_sec,
+      stringsAsFactors = FALSE
+    )
+  }))
+  pg_df <- bind_rows_safe(lapply(res$pg_path, function(fit) {
+    data.frame(
+      path_index = fit$path_index,
+      lambda_gamma = fit$lambda_gamma,
+      lambda_Omega = fit$lambda_Omega,
+      pg_final_loss = tail(fit$loss_hist, 1),
+      pg_converged = fit$converged,
+      pg_elapsed_sec = fit$elapsed_time_sec,
+      stringsAsFactors = FALSE
+    )
+  }))
+
+  pn_df <- pn_df[order(pn_df$path_index), , drop = FALSE]
+  pg_df <- pg_df[order(pg_df$path_index), , drop = FALSE]
+  pn_df$pn_cum_elapsed_sec <- cumsum(pn_df$pn_elapsed_sec)
+  pg_df$pg_cum_elapsed_sec <- cumsum(pg_df$pg_elapsed_sec)
+
+  out <- merge(
+    pn_df,
+    pg_df,
+    by = c("path_index", "lambda_gamma", "lambda_Omega"),
+    all = TRUE,
+    sort = TRUE
+  )
+  out$case <- meta$case
+  out$tol_outer <- meta$tol_outer
+  out$tol_inner_base <- meta$tol_inner_base
+  out$tol_inner_floor <- meta$tol_inner_floor
+  out$max_iter_outer <- meta$max_iter_outer
+  out
+}
+
+compare_time_method1_first_pg_better <- function(metrics_df) {
+  idx <- which(
+    is.finite(metrics_df$pg_final_loss) &
+      is.finite(metrics_df$pn_final_loss) &
+      metrics_df$pg_final_loss < metrics_df$pn_final_loss
+  )
+  if (length(idx) == 0) {
+    return(data.frame(
+      first_better_found = FALSE,
+      first_better_path_index = NA_integer_,
+      pn_final_loss_at_first_better = NA_real_,
+      pg_final_loss_at_first_better = NA_real_,
+      loss_diff_at_first_better = NA_real_,
+      pn_cum_time_to_first_better_sec = NA_real_,
+      pg_cum_time_to_first_better_sec = NA_real_,
+      cum_time_diff_pg_minus_pn_sec = NA_real_,
+      stringsAsFactors = FALSE
+    ))
+  }
+  i <- idx[1]
+  data.frame(
+    first_better_found = TRUE,
+    first_better_path_index = metrics_df$path_index[i],
+    pn_final_loss_at_first_better = metrics_df$pn_final_loss[i],
+    pg_final_loss_at_first_better = metrics_df$pg_final_loss[i],
+    loss_diff_at_first_better = metrics_df$pg_final_loss[i] - metrics_df$pn_final_loss[i],
+    pn_cum_time_to_first_better_sec = metrics_df$pn_cum_elapsed_sec[i],
+    pg_cum_time_to_first_better_sec = metrics_df$pg_cum_elapsed_sec[i],
+    cum_time_diff_pg_minus_pn_sec = metrics_df$pg_cum_elapsed_sec[i] - metrics_df$pn_cum_elapsed_sec[i],
+    stringsAsFactors = FALSE
+  )
+}
+
+compare_time_method2_first_converged <- function(metrics_df) {
+  pn_idx <- which(!is.na(metrics_df$pn_converged) & metrics_df$pn_converged)
+  pg_idx <- which(!is.na(metrics_df$pg_converged) & metrics_df$pg_converged)
+
+  pn_found <- length(pn_idx) > 0
+  pg_found <- length(pg_idx) > 0
+  pn_i <- if (pn_found) pn_idx[1] else NA_integer_
+  pg_i <- if (pg_found) pg_idx[1] else NA_integer_
+
+  pn_time <- if (pn_found) metrics_df$pn_cum_elapsed_sec[pn_i] else NA_real_
+  pg_time <- if (pg_found) metrics_df$pg_cum_elapsed_sec[pg_i] else NA_real_
+  diff_time <- if (pn_found && pg_found) pg_time - pn_time else NA_real_
+
+  data.frame(
+    pn_first_converged_found = pn_found,
+    pn_first_converged_path = if (pn_found) metrics_df$path_index[pn_i] else NA_integer_,
+    pn_cum_time_to_first_converged_sec = pn_time,
+    pg_first_converged_found = pg_found,
+    pg_first_converged_path = if (pg_found) metrics_df$path_index[pg_i] else NA_integer_,
+    pg_cum_time_to_first_converged_sec = pg_time,
+    cum_time_diff_pg_minus_pn_at_first_converged_sec = diff_time,
+    stringsAsFactors = FALSE
+  )
+}
+
+run_task3_two_setting_comparison <- function(data_list, cfg_base, setting_a_run = NULL, max_iter_outer = 10000L) {
+  settings <- data.frame(
+    setting_id = c("A", "B"),
+    tol_outer = c(1e-4, 1e-5),
+    tol_inner_base = c(1e-5, 1e-6),
+    tol_inner_floor = c(1e-8, 1e-8),
+    stringsAsFactors = FALSE
+  )
+
+  method1_rows <- list()
+  method2_rows <- list()
+  metric_tables <- list()
+  config_tables <- list()
+
+  for (i in seq_len(nrow(settings))) {
+    st <- settings[i, , drop = FALSE]
+    if (!is.null(setting_a_run) &&
+        identical(st$setting_id[[1]], "A") &&
+        abs(setting_a_run$meta$tol_outer - st$tol_outer[[1]]) <= .Machine$double.eps^0.5 &&
+        abs(setting_a_run$meta$tol_inner_base - st$tol_inner_base[[1]]) <= .Machine$double.eps^0.5) {
+      run_out <- setting_a_run
+    } else {
+      run_out <- run_case_norm_once(
+        data_list = data_list,
+        cfg = cfg_base,
+        tol_outer = st$tol_outer[[1]],
+        tol_inner_base = st$tol_inner_base[[1]],
+        tol_inner_floor = st$tol_inner_floor[[1]],
+        max_iter_outer = max_iter_outer
+      )
+    }
+
+    tol_tag <- run_out$meta$tol_tag
+    inner_tag <- run_out$meta$inner_tag
+
+    metrics_df <- collect_method_path_metrics(run_out$res, run_out$meta)
+    m1 <- compare_time_method1_first_pg_better(metrics_df)
+    m2 <- compare_time_method2_first_converged(metrics_df)
+
+    shared_meta <- data.frame(
+      setting_id = st$setting_id[[1]],
+      case = run_out$meta$case,
+      tol_outer = run_out$meta$tol_outer,
+      tol_inner_base = run_out$meta$tol_inner_base,
+      tol_inner_floor = run_out$meta$tol_inner_floor,
+      max_iter_outer = run_out$meta$max_iter_outer,
+      stringsAsFactors = FALSE
+    )
+    m1 <- cbind(shared_meta, m1)
+    m2 <- cbind(shared_meta, m2)
+
+    write.csv(
+      m1,
+      sprintf("pn_pg_time_method1_case_norm_mode_tol_%s_inner_%s.csv", tol_tag, inner_tag),
+      row.names = FALSE
+    )
+    write.csv(
+      m2,
+      sprintf("pn_pg_time_method2_case_norm_mode_tol_%s_inner_%s.csv", tol_tag, inner_tag),
+      row.names = FALSE
+    )
+    write.csv(
+      metrics_df,
+      sprintf("pn_pg_time_path_metrics_case_norm_mode_tol_%s_inner_%s.csv", tol_tag, inner_tag),
+      row.names = FALSE
+    )
+    write.csv(
+      run_out$config_snapshot,
+      sprintf("run_config_snapshot_case_norm_mode_tol_%s_inner_%s.csv", tol_tag, inner_tag),
+      row.names = FALSE
+    )
+    write.csv(
+      run_out$lambda_summary,
+      sprintf("lambda_summary_case_norm_mode_tol_%s_inner_%s.csv", tol_tag, inner_tag),
+      row.names = FALSE
+    )
+
+    method1_rows[[st$setting_id[[1]]]] <- m1
+    method2_rows[[st$setting_id[[1]]]] <- m2
+    metric_tables[[st$setting_id[[1]]]] <- metrics_df
+    config_tables[[st$setting_id[[1]]]] <- run_out$config_snapshot
+  }
+
+  method1_all <- bind_rows_safe(method1_rows)
+  method2_all <- bind_rows_safe(method2_rows)
+  combined <- merge(
+    method1_all,
+    method2_all,
+    by = c("setting_id", "case", "tol_outer", "tol_inner_base", "tol_inner_floor", "max_iter_outer"),
+    all = TRUE,
+    sort = TRUE
+  )
+  write.csv(combined, "pn_pg_time_methods_case_norm_mode_two_settings.csv", row.names = FALSE)
+
+  list(
+    method1 = method1_all,
+    method2 = method2_all,
+    combined = combined,
+    metrics = metric_tables,
+    config = config_tables
+  )
+}
+
+run_norm_mode_tasks_profile <- function(data_list = shared_data, cfg_base = SIM_CONFIG) {
+  compute_mode <- Sys.getenv("COMPUTE_MODE", unset = "hybrid_auto")
+  max_cpu_threads <- get_env_numeric(
+    "MAX_CPU_THREADS",
+    parallel::detectCores(logical = TRUE),
+    integer = TRUE
+  )
+  compute_info <- configure_compute_resources(compute_mode = compute_mode, max_cpu_threads = max_cpu_threads)
+  max_iter_outer <- 10000L
+
+  setting_a <- run_case_norm_once(
+    data_list = data_list,
+    cfg = cfg_base,
+    tol_outer = 1e-4,
+    tol_inner_base = 1e-5,
+    tol_inner_floor = 1e-8,
+    max_iter_outer = max_iter_outer
+  )
+
+  pn_outputs <- build_pn_iteration_outputs(setting_a$res, setting_a$meta)
+  write.csv(
+    pn_outputs$summary,
+    sprintf("pn_iteration_summary_case_norm_mode_tol_%s.csv", setting_a$meta$tol_tag),
+    row.names = FALSE
+  )
+  write.csv(
+    pn_outputs$detail,
+    sprintf("pn_outer_inner_detail_case_norm_mode_tol_%s.csv", setting_a$meta$tol_tag),
+    row.names = FALSE
+  )
+
+  loss_diff_df <- build_final_loss_diff_outputs(setting_a$res, setting_a$meta)
+  write.csv(
+    loss_diff_df,
+    sprintf("pn_pg_final_loss_diff_case_norm_mode_tol_%s.csv", setting_a$meta$tol_tag),
+    row.names = FALSE
+  )
+
+  write.csv(
+    setting_a$config_snapshot,
+    sprintf("run_config_snapshot_case_norm_mode_tol_%s.csv", setting_a$meta$tol_tag),
+    row.names = FALSE
+  )
+  write.csv(
+    setting_a$lambda_summary,
+    sprintf("lambda_summary_case_norm_mode_tol_%s.csv", setting_a$meta$tol_tag),
+    row.names = FALSE
+  )
+
+  task3_out <- run_task3_two_setting_comparison(
+    data_list = data_list,
+    cfg_base = cfg_base,
+    setting_a_run = setting_a,
+    max_iter_outer = max_iter_outer
+  )
+
+  cat("\n=== norm_mode_tasks summary ===\n")
+  cat(sprintf(
+    "compute_mode=%s | cpu_threads=%d | gpu_backend=%s | gpu_enabled=%s\n",
+    compute_info$compute_mode,
+    compute_info$max_cpu_threads,
+    compute_info$gpu_info$backend,
+    ifelse(compute_info$gpu_enabled, "TRUE", "FALSE")
+  ))
+  if (!is.null(task3_out$method1) && nrow(task3_out$method1) > 0) print(task3_out$method1)
+  if (!is.null(task3_out$method2) && nrow(task3_out$method2) > 0) print(task3_out$method2)
+  cat("Task outputs written:\n")
+  cat(sprintf("  - pn_iteration_summary_case_norm_mode_tol_%s.csv\n", setting_a$meta$tol_tag))
+  cat(sprintf("  - pn_outer_inner_detail_case_norm_mode_tol_%s.csv\n", setting_a$meta$tol_tag))
+  cat(sprintf("  - pn_pg_final_loss_diff_case_norm_mode_tol_%s.csv\n", setting_a$meta$tol_tag))
+  cat("  - pn_pg_time_methods_case_norm_mode_two_settings.csv\n")
+  flush.console()
+
+  invisible(list(
+    setting_a = setting_a,
+    pn_outputs = pn_outputs,
+    loss_diff = loss_diff_df,
+    task3 = task3_out,
+    compute = compute_info
+  ))
+}
+
+run_profile <- Sys.getenv("RUN_PROFILE", unset = "default")
+if (!run_profile %in% c("default", "norm_mode_tasks", "pn_first_pg_target")) {
+  warning(sprintf("Unknown RUN_PROFILE '%s'; using default workflow.", run_profile))
+  run_profile <- "default"
+}
+if (identical(run_profile, "norm_mode_tasks")) {
+  run_norm_mode_tasks_profile()
+}
+if (identical(run_profile, "pn_first_pg_target")) {
+  run_pn_first_pg_target_profile()
+}
+
+if (identical(run_profile, "default")) {
 solver_tols <- SIM_CONFIG$reporting$solver_tols
 settings_table <- data.frame(
   solver_tol = solver_tols,
@@ -2322,7 +3500,8 @@ for (solver_tol in solver_tols) {
       solver_tol = solver_tol,
       gap_tol = if (is.null(cfg_case$benchmark$gap_tol_mode)) NA_real_ else cfg_case$benchmark$gap_tol_mode,
       use_oracle = identical(case_name, "case_oracle_change"),
-      use_relative_gap = cfg_case$benchmark$use_relative_gap_mode
+      use_relative_gap = cfg_case$benchmark$use_relative_gap_mode,
+      run_profile = "default"
     )
 
     lambda_summary_df <- add_case_column(lambda_summary_df, case_name)
@@ -2496,3 +3675,4 @@ saveRDS(list(
   oracle_pn_100iter_nondecrease_counts_all = oracle_pn_100iter_nondecrease_counts_all,
   run_config_snapshot_all = run_config_snapshot_all
 ), file = "pn_diagnostics_all.rds")
+}

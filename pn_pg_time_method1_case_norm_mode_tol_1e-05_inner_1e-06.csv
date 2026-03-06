@@ -1,0 +1,2 @@
+"setting_id","case","tol_outer","tol_inner_base","tol_inner_floor","max_iter_outer","first_better_found","first_better_path_index","pn_final_loss_at_first_better","pg_final_loss_at_first_better","loss_diff_at_first_better","pn_cum_time_to_first_better_sec","pg_cum_time_to_first_better_sec","cum_time_diff_pg_minus_pn_sec"
+"B","case_norm_mode",1e-05,1e-06,1e-08,10000,TRUE,1,138.086023084597,138.086023084596,-1.19371179607697e-12,0.0827329158782959,0.0487039089202881,-0.0340290069580078

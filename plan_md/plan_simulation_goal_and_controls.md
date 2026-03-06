@@ -121,3 +121,33 @@
 7. `case_oracle_change` uses shared PN fixed-100 oracle vector for both methods.
 8. Exactly 6 required plot files are produced with PN/PG overlays and timing subtitles.
 9. `solution_path_time_by_stop_mode_tol_1e-07.csv` contains 6 rows (`3 cases x 2 methods`) with required columns.
+
+## PN-first PG-target solver protocol (paper workflow)
+1. Dedicated run profile:
+   - `RUN_PROFILE=pn_first_pg_target`
+2. Fixed setting for this workflow:
+   - `case_norm_mode`
+   - `tol_outer=1e-4`
+   - `tol_inner_base=1e-5`
+   - `tol_inner_floor=1e-8`
+3. PN-first stage:
+   - run PN across all 60 lambda paths
+   - record PN final objective loss per path (`pn_final_loss`)
+4. PG target-only stage:
+   - run PG with strict target condition:
+   - stop only when `PG loss < PN final loss - 1e-12`, or at hard cap
+   - PG hard cap: `max_iter=10000`
+   - PG stop modes are disabled in this profile
+5. Time reporting for this profile:
+   - per-path table with PN/PG elapsed time and tolerance metadata
+   - total table with one row per method (`PN`, `PG`)
+6. PN iteration distribution requirement:
+   - frequency table by PN outer iterations (`pn_outer_iters`, `path_count`, `path_fraction`)
+7. Required artifacts for this profile:
+   - `pn_reference_final_loss_case_norm_mode_tol_1e-04.csv`
+   - `pg_to_pn_target_path_case_norm_mode_tol_1e-04_max_iter_10000.csv`
+   - `pn_pg_target_comparison_case_norm_mode_tol_1e-04_max_iter_10000.csv`
+   - `pn_pg_time_per_path_case_norm_mode_tol_1e-04_max_iter_10000.csv`
+   - `pn_pg_time_total_case_norm_mode_tol_1e-04_max_iter_10000.csv`
+   - `pn_outer_iter_frequency_case_norm_mode_tol_1e-04.csv`
+   - `run_config_snapshot_pn_first_pg_target_tol_1e-04.csv`

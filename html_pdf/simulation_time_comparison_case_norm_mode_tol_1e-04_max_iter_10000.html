@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html><head><meta charset='utf-8'><title>Simulation Time Comparison</title>
+<style>
+body{font-family:Arial,Helvetica,sans-serif; margin:24px; line-height:1.4;}
+h1,h2,h3{margin:0 0 10px 0;}
+.meta{margin-bottom:18px;color:#333;}
+.plot{margin:18px 0 30px 0;}
+img{max-width:1100px;width:100%;border:1px solid #ddd;}
+table{border-collapse:collapse; margin:10px 0 24px 0; font-size:13px;}
+th,td{border:1px solid #bbb; padding:6px 8px; text-align:left;}
+th{background:#f5f5f5;}
+</style></head><body>
+<h1>Simulation Comparison Report</h1>
+<div class='meta'>Generated at: 2026-03-05 20:44:03 CST</div>
+<div class='meta'>Settings: case_norm_mode, tol_outer=1e-04, tol_inner_base=1e-05, tol_inner_floor=1e-08, max_iter_pg_target=10000</div>
+<h2>Requested Plots</h2>
+<div class='plot'><h3>Training Loss vs log(lambda)</h3><img src='simulation_training_loss_vs_loglambda.png' alt='Training loss vs log lambda'></div>
+<div class='plot'><h3>Outer Iterations vs log(lambda)</h3><img src='simulation_outer_iterations_vs_loglambda.png' alt='Outer iterations vs log lambda'></div>
+<div class='plot'><h3>Total Simulation Time</h3><img src='simulation_total_time_bar.png' alt='Total simulation time'></div>
+<h2>Total Simulation Time Table</h2>
+<table><tr><th>method</th><th>total_elapsed_sec</th><th>tol_outer</th><th>tol_inner_base</th><th>tol_inner_floor</th><th>max_iter_pg_target</th></tr><tr><td>PN</td><td> 96.80065</td><td>1e-04</td><td>1e-05</td><td>1e-08</td><td>10000</td></tr><tr><td>PG</td><td>256.49280</td><td>1e-04</td><td>1e-05</td><td>1e-08</td><td>10000</td></tr></table>
+</body></html>

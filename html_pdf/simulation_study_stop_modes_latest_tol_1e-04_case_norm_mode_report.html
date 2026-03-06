@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html><head><meta charset='utf-8'><title>Case Norm Mode Report</title>
+<style>
+body{font-family:Arial,Helvetica,sans-serif; margin:24px; line-height:1.4;}
+h1,h2,h3{margin:0 0 10px 0;}
+.meta{margin-bottom:20px;color:#333;}
+.plot{margin:20px 0 32px 0;}
+img{max-width:1100px;width:100%;border:1px solid #ddd;}
+table{border-collapse:collapse; margin:10px 0 24px 0; font-size:13px;}
+th,td{border:1px solid #bbb; padding:6px 8px; text-align:left;}
+th{background:#f5f5f5;}
+</style></head><body>
+<h1>Simulation Study Report (case_norm_mode)</h1>
+<div class='meta'>Generated at: 2026-03-05 19:24:22 CST</div>
+<h2>Settings</h2>
+<ul>
+<li>Setting A: tol_outer=1e-04, tol_inner_base=1e-05, tol_inner_floor=1e-08</li>
+<li>Setting B: tol_outer=1e-05, tol_inner_base=1e-06, tol_inner_floor=1e-08</li>
+<li>Stopping mode: case_norm_mode (PN: local_norm, PG: l2_step_norm)</li>
+</ul>
+<h2>All Plots</h2>
+<div class='plot'><h3>Training loss (Setting A)</h3>
+<img src='case_norm_mode_training_loss_setting_A.png' alt='Training loss Setting A'></div>
+<div class='plot'><h3>Iterations (Setting A)</h3>
+<img src='case_norm_mode_iterations_setting_A.png' alt='Iterations Setting A'></div>
+<div class='plot'><h3>Training loss (Setting B)</h3>
+<img src='case_norm_mode_training_loss_setting_B.png' alt='Training loss Setting B'></div>
+<div class='plot'><h3>Iterations (Setting B)</h3>
+<img src='case_norm_mode_iterations_setting_B.png' alt='Iterations Setting B'></div>
+<h2>Computation Time + Tolerance Record</h2>
+<table><tr><th>setting_id</th><th>tol_outer</th><th>tol_inner_base</th><th>tol_inner_floor</th><th>pn_total_elapsed_sec</th><th>pg_total_elapsed_sec</th></tr><tr><td>A</td><td>1e-04</td><td>1e-05</td><td>1e-08</td><td>109.1429</td><td>188.4749</td></tr><tr><td>B</td><td>1e-05</td><td>1e-06</td><td>1e-08</td><td>181.3363</td><td>250.4709</td></tr></table>
+</body></html>

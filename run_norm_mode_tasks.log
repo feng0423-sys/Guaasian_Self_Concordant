@@ -1,0 +1,674 @@
+=== Active SIM_CONFIG ===
+$simulation
+$simulation$seed
+[1] 20251025
+
+$simulation$n
+[1] 1000
+
+$simulation$p
+[1] 50
+
+$simulation$q
+[1] 50
+
+$simulation$gamma_sparsity
+[1] 0.05
+
+$simulation$gamma_mag
+[1] 1 2
+
+$simulation$gamma_signed
+[1] TRUE
+
+$simulation$intercept_zero
+[1] TRUE
+
+$simulation$center_X
+[1] TRUE
+
+$simulation$omega_kappa
+[1] 60
+
+$simulation$omega_sparsity
+[1] 0.05
+
+$simulation$omega_base_val
+[1] 0.5
+
+
+$lambda_path
+$lambda_path$path_len
+[1] 60
+
+$lambda_path$ratio_lambda
+[1] 1e-04
+
+
+$outer_pg
+$outer_pg$max_iter
+[1] 5000
+
+$outer_pg$min_iter
+[1] 100
+
+$outer_pg$tol_PG_sub
+[1] 1e-07
+
+$outer_pg$tol_obj
+[1] 1e-07
+
+$outer_pg$tol_gm
+[1] 1e-07
+
+$outer_pg$use_relative_obj
+[1] TRUE
+
+$outer_pg$L0
+[1] 1
+
+$outer_pg$stop_modes
+[1] "relative_change" "oracle_change"   "l2_step_norm"   
+
+$outer_pg$stop_logic
+[1] "any"
+
+$outer_pg$l2_norm_tol
+[1] 1e-07
+
+
+$outer_pn
+$outer_pn$max_iter
+[1] 5000
+
+$outer_pn$tol_PN_sub
+[1] 1e-07
+
+$outer_pn$stop_modes
+[1] "local_norm"      "relative_change" "oracle_change"  
+
+$outer_pn$stop_logic
+[1] "any"
+
+$outer_pn$line_search
+$outer_pn$line_search$max_halving
+[1] 3
+
+$outer_pn$line_search$min_alpha
+[1] 1e-08
+
+$outer_pn$line_search$descent_eps
+[1] 2e-12
+
+
+$outer_pn$progress_every
+[1] 50
+
+
+$pn_subproblem_admm
+$pn_subproblem_admm$max_iter
+[1] 1000
+
+$pn_subproblem_admm$tol_PN_ADMM_base
+[1] 1e-08
+
+$pn_subproblem_admm$tol_PN_ADMM_floor
+[1] 1e-10
+
+$pn_subproblem_admm$refine_trigger_halvings
+[1] 3
+
+$pn_subproblem_admm$refine_factor
+[1] 10
+
+$pn_subproblem_admm$max_refinement_rounds
+[1] 3
+
+$pn_subproblem_admm$stop_mode
+[1] "residual_plus_proxy"
+
+$pn_subproblem_admm$adaptive_rho
+$pn_subproblem_admm$adaptive_rho$enabled
+[1] TRUE
+
+$pn_subproblem_admm$adaptive_rho$rho
+[1] 1
+
+$pn_subproblem_admm$adaptive_rho$rho_mu
+[1] 10
+
+$pn_subproblem_admm$adaptive_rho$rho_tau_inc
+[1] 2
+
+$pn_subproblem_admm$adaptive_rho$rho_tau_dec
+[1] 2
+
+$pn_subproblem_admm$adaptive_rho$rho_min
+[1] 1e-08
+
+$pn_subproblem_admm$adaptive_rho$rho_max
+[1] 1e+08
+
+
+
+$omega_prox_admm_pg
+$omega_prox_admm_pg$max_iter
+[1] 1000
+
+$omega_prox_admm_pg$tol_Omega_ADMM
+[1] 1e-08
+
+$omega_prox_admm_pg$tol_Omega_ADMM_floor
+[1] 1e-10
+
+$omega_prox_admm_pg$mu
+[1] 1
+
+$omega_prox_admm_pg$stop_mode
+[1] "current"
+
+$omega_prox_admm_pg$eig_floor
+[1] 1e-08
+
+
+$omega_prox_admm_pn
+$omega_prox_admm_pn$max_iter
+[1] 1000
+
+$omega_prox_admm_pn$tol_Omega_ADMM
+[1] 1e-08
+
+$omega_prox_admm_pn$tol_Omega_ADMM_floor
+[1] 1e-10
+
+$omega_prox_admm_pn$mu
+[1] 1
+
+$omega_prox_admm_pn$stop_mode
+[1] "duality_gap"
+
+$omega_prox_admm_pn$eig_floor
+[1] 1e-08
+
+
+$oracle_eval
+$oracle_eval$fixed_iters
+[1] 100
+
+$oracle_eval$run_for_exports
+[1] TRUE
+
+$oracle_eval$reuse_existing
+[1] FALSE
+
+$oracle_eval$reuse_file
+[1] ""
+
+$oracle_eval$nondecrease_eps
+[1] 1e-12
+
+$oracle_eval$loss_definition
+[1] "best_within_fixed_iters"
+
+$oracle_eval$scope
+[1] "whole_path"
+
+
+$numerics
+$numerics$safe_inv_eps
+[1] 1e-08
+
+$numerics$safe_inv_jitter_init
+[1] 0
+
+$numerics$safe_inv_jitter_max
+[1] 1e-05
+
+$numerics$safe_logdet_jitter_init
+[1] 0
+
+$numerics$safe_logdet_jitter_max
+[1] 1e-05
+
+$numerics$safe_logdet_eps
+[1] 1e-10
+
+$numerics$matrix_condition_eps
+[1] 1e-12
+
+$numerics$pn_subproblem_eig_floor
+[1] 1e-12
+
+$numerics$null_corner_eps
+[1] 1e-08
+
+
+$benchmark
+$benchmark$use_oracle_mode
+[1] FALSE
+
+$benchmark$use_relative_gap_mode
+[1] FALSE
+
+$benchmark$gap_tol_mode
+NULL
+
+
+$reporting
+$reporting$solver_tols
+[1] 1e-07
+
+$reporting$method_levels
+[1] "Prox-Newton"   "Prox-Gradient"
+
+$reporting$write_parameter_catalog
+[1] TRUE
+
+
+=========================
+[compute] GPU unavailable -> CPU-only execution
+[compute] mode=hybrid_auto | cpu_threads=10 | gpu_backend=metal | gpu_enabled=FALSE
+[compute] GPU probe details: Chipset Model: Apple M4 | Total Number of Cores: 10 | Metal Support: Metal 4
+[PN path] step 1/60
+[PN outer] iter 1/10000 | loss=1.380860e+02 | rel_change=8.583e-15 | ls_ok=TRUE | inner=111 | admm_tol=1.0e-07
+[PN path] step 2/60
+[PN outer] iter 1/10000 | loss=1.380860e+02 | rel_change=0.000e+00 | ls_ok=FALSE | inner=4000 | admm_tol=1.0e-08
+[PN path] step 3/60
+[PN outer] iter 1/10000 | loss=1.376857e+02 | rel_change=2.878e-03 | ls_ok=TRUE | inner=41 | admm_tol=1.0e-05
+[PN path] step 4/60
+[PN outer] iter 1/10000 | loss=1.364678e+02 | rel_change=2.836e-03 | ls_ok=TRUE | inner=45 | admm_tol=1.0e-05
+[PN path] step 5/60
+[PN outer] iter 1/10000 | loss=1.343123e+02 | rel_change=3.509e-03 | ls_ok=TRUE | inner=1000 | admm_tol=1.0e-05
+[PN path] step 6/60
+[PN outer] iter 1/10000 | loss=1.315355e+02 | rel_change=3.004e-03 | ls_ok=TRUE | inner=28 | admm_tol=1.0e-05
+[PN path] step 7/60
+[PN outer] iter 1/10000 | loss=1.280149e+02 | rel_change=2.901e-03 | ls_ok=TRUE | inner=28 | admm_tol=1.0e-05
+[PN path] step 8/60
+[PN outer] iter 1/10000 | loss=1.240357e+02 | rel_change=2.743e-03 | ls_ok=TRUE | inner=132 | admm_tol=1.0e-05
+[PN path] step 9/60
+[PN outer] iter 1/10000 | loss=1.197588e+02 | rel_change=2.624e-03 | ls_ok=TRUE | inner=128 | admm_tol=1.0e-05
+[PN path] step 10/60
+[PN outer] iter 1/10000 | loss=1.152946e+02 | rel_change=2.567e-03 | ls_ok=TRUE | inner=124 | admm_tol=1.0e-05
+[PN path] step 11/60
+[PN outer] iter 1/10000 | loss=1.107228e+02 | rel_change=2.501e-03 | ls_ok=TRUE | inner=116 | admm_tol=1.0e-05
+[PN path] step 12/60
+[PN outer] iter 1/10000 | loss=1.061190e+02 | rel_change=2.434e-03 | ls_ok=TRUE | inner=105 | admm_tol=1.0e-05
+[PN path] step 13/60
+[PN outer] iter 1/10000 | loss=1.017747e+02 | rel_change=1.223e-04 | ls_ok=TRUE | inner=1000 | admm_tol=1.0e-05
+[PN path] step 14/60
+[PN outer] iter 1/10000 | loss=9.703778e+01 | rel_change=2.332e-03 | ls_ok=TRUE | inner=50 | admm_tol=1.0e-05
+[PN path] step 15/60
+[PN outer] iter 1/10000 | loss=9.263711e+01 | rel_change=2.280e-03 | ls_ok=TRUE | inner=51 | admm_tol=1.0e-05
+[PN path] step 16/60
+[PN outer] iter 1/10000 | loss=8.837126e+01 | rel_change=2.221e-03 | ls_ok=TRUE | inner=52 | admm_tol=1.0e-05
+[PN path] step 17/60
+[PN outer] iter 1/10000 | loss=8.425749e+01 | rel_change=2.192e-03 | ls_ok=TRUE | inner=50 | admm_tol=1.0e-05
+[PN path] step 18/60
+[PN outer] iter 1/10000 | loss=8.030394e+01 | rel_change=2.172e-03 | ls_ok=TRUE | inner=52 | admm_tol=1.0e-05
+[PN path] step 19/60
+[PN outer] iter 1/10000 | loss=7.651649e+01 | rel_change=2.122e-03 | ls_ok=TRUE | inner=62 | admm_tol=1.0e-05
+[PN path] step 20/60
+[PN outer] iter 1/10000 | loss=7.290212e+01 | rel_change=2.102e-03 | ls_ok=TRUE | inner=115 | admm_tol=1.0e-05
+[PN path] step 21/60
+[PN outer] iter 1/10000 | loss=6.946219e+01 | rel_change=2.049e-03 | ls_ok=TRUE | inner=123 | admm_tol=1.0e-05
+[PN path] step 22/60
+[PN outer] iter 1/10000 | loss=6.620199e+01 | rel_change=1.985e-03 | ls_ok=TRUE | inner=108 | admm_tol=1.0e-05
+[PN path] step 23/60
+[PN outer] iter 1/10000 | loss=6.311908e+01 | rel_change=1.952e-03 | ls_ok=TRUE | inner=97 | admm_tol=1.0e-05
+[PN path] step 24/60
+[PN outer] iter 1/10000 | loss=6.020866e+01 | rel_change=1.916e-03 | ls_ok=TRUE | inner=88 | admm_tol=1.0e-05
+[PN path] step 25/60
+[PN outer] iter 1/10000 | loss=5.745552e+01 | rel_change=1.967e-03 | ls_ok=TRUE | inner=80 | admm_tol=1.0e-05
+[PN path] step 26/60
+[PN outer] iter 1/10000 | loss=5.485011e+01 | rel_change=1.923e-03 | ls_ok=TRUE | inner=78 | admm_tol=1.0e-05
+[PN outer] iter 50/10000 | loss=5.483331e+01 | rel_change=2.899e-11 | ls_ok=TRUE | inner=1 | admm_tol=1.0e-05
+[PN outer] iter 100/10000 | loss=5.483331e+01 | rel_change=4.229e-11 | ls_ok=TRUE | inner=1 | admm_tol=1.0e-05
+[PN path] step 27/60
+[PN outer] iter 1/10000 | loss=5.239175e+01 | rel_change=1.868e-03 | ls_ok=TRUE | inner=86 | admm_tol=1.0e-05
+[PN path] step 28/60
+[PN outer] iter 1/10000 | loss=5.007650e+01 | rel_change=1.808e-03 | ls_ok=TRUE | inner=94 | admm_tol=1.0e-05
+[PN path] step 29/60
+[PN outer] iter 1/10000 | loss=4.790289e+01 | rel_change=1.739e-03 | ls_ok=TRUE | inner=102 | admm_tol=1.0e-05
+[PN path] step 30/60
+[PN outer] iter 1/10000 | loss=4.586685e+01 | rel_change=1.671e-03 | ls_ok=TRUE | inner=170 | admm_tol=1.0e-05
+[PN path] step 31/60
+[PN outer] iter 1/10000 | loss=4.396785e+01 | rel_change=1.547e-03 | ls_ok=TRUE | inner=101 | admm_tol=1.0e-05
+[PN path] step 32/60
+[PN outer] iter 1/10000 | loss=4.220425e+01 | rel_change=1.445e-03 | ls_ok=TRUE | inner=64 | admm_tol=1.0e-05
+[PN path] step 33/60
+[PN outer] iter 1/10000 | loss=4.057242e+01 | rel_change=1.328e-03 | ls_ok=TRUE | inner=69 | admm_tol=1.0e-05
+[PN path] step 34/60
+[PN outer] iter 1/10000 | loss=3.906974e+01 | rel_change=1.191e-03 | ls_ok=TRUE | inner=74 | admm_tol=1.0e-05
+[PN path] step 35/60
+[PN outer] iter 1/10000 | loss=3.769462e+01 | rel_change=1.045e-03 | ls_ok=TRUE | inner=79 | admm_tol=1.0e-05
+[PN path] step 36/60
+[PN outer] iter 1/10000 | loss=3.644322e+01 | rel_change=9.110e-04 | ls_ok=TRUE | inner=85 | admm_tol=1.0e-05
+[PN path] step 37/60
+[PN outer] iter 1/10000 | loss=3.531045e+01 | rel_change=7.795e-04 | ls_ok=TRUE | inner=91 | admm_tol=1.0e-05
+[PN path] step 38/60
+[PN outer] iter 1/10000 | loss=3.429002e+01 | rel_change=6.708e-04 | ls_ok=TRUE | inner=99 | admm_tol=1.0e-05
+[PN path] step 39/60
+[PN outer] iter 1/10000 | loss=3.337450e+01 | rel_change=5.731e-04 | ls_ok=TRUE | inner=102 | admm_tol=1.0e-05
+[PN path] step 40/60
+[PN outer] iter 1/10000 | loss=3.255593e+01 | rel_change=4.918e-04 | ls_ok=TRUE | inner=106 | admm_tol=1.0e-05
+[PN path] step 41/60
+[PN outer] iter 1/10000 | loss=3.182558e+01 | rel_change=4.369e-04 | ls_ok=TRUE | inner=110 | admm_tol=1.0e-05
+[PN path] step 42/60
+[PN outer] iter 1/10000 | loss=3.117449e+01 | rel_change=3.903e-04 | ls_ok=TRUE | inner=95 | admm_tol=1.0e-05
+[PN path] step 43/60
+[PN outer] iter 1/10000 | loss=3.059424e+01 | rel_change=3.529e-04 | ls_ok=TRUE | inner=100 | admm_tol=1.0e-05
+[PN path] step 44/60
+[PN outer] iter 1/10000 | loss=3.007722e+01 | rel_change=3.240e-04 | ls_ok=TRUE | inner=83 | admm_tol=1.0e-05
+[PN path] step 45/60
+[PN outer] iter 1/10000 | loss=2.961589e+01 | rel_change=3.009e-04 | ls_ok=TRUE | inner=83 | admm_tol=1.0e-05
+[PN path] step 46/60
+[PN outer] iter 1/10000 | loss=2.920432e+01 | rel_change=2.702e-04 | ls_ok=TRUE | inner=84 | admm_tol=1.0e-05
+[PN path] step 47/60
+[PN outer] iter 1/10000 | loss=2.883719e+01 | rel_change=2.442e-04 | ls_ok=TRUE | inner=80 | admm_tol=1.0e-05
+[PN path] step 48/60
+[PN outer] iter 1/10000 | loss=2.850997e+01 | rel_change=2.120e-04 | ls_ok=TRUE | inner=80 | admm_tol=1.0e-05
+[PN path] step 49/60
+[PN outer] iter 1/10000 | loss=2.821890e+01 | rel_change=1.813e-04 | ls_ok=TRUE | inner=79 | admm_tol=1.0e-05
+[PN path] step 50/60
+[PN outer] iter 1/10000 | loss=2.796051e+01 | rel_change=1.537e-04 | ls_ok=TRUE | inner=68 | admm_tol=1.0e-05
+[PN path] step 51/60
+[PN outer] iter 1/10000 | loss=2.773178e+01 | rel_change=1.251e-04 | ls_ok=TRUE | inner=78 | admm_tol=1.0e-05
+[PN path] step 52/60
+[PN outer] iter 1/10000 | loss=2.752995e+01 | rel_change=1.012e-04 | ls_ok=TRUE | inner=77 | admm_tol=1.0e-05
+[PN path] step 53/60
+[PN outer] iter 1/10000 | loss=2.735231e+01 | rel_change=8.251e-05 | ls_ok=TRUE | inner=76 | admm_tol=1.0e-05
+[PN path] step 54/60
+[PN outer] iter 1/10000 | loss=2.719630e+01 | rel_change=6.717e-05 | ls_ok=TRUE | inner=74 | admm_tol=1.0e-05
+[PN path] step 55/60
+[PN outer] iter 1/10000 | loss=2.705959e+01 | rel_change=5.402e-05 | ls_ok=TRUE | inner=72 | admm_tol=1.0e-05
+[PN path] step 56/60
+[PN outer] iter 1/10000 | loss=2.694005e+01 | rel_change=4.264e-05 | ls_ok=TRUE | inner=71 | admm_tol=1.0e-05
+[PN path] step 57/60
+[PN outer] iter 1/10000 | loss=2.683576e+01 | rel_change=3.351e-05 | ls_ok=TRUE | inner=69 | admm_tol=1.0e-05
+[PN path] step 58/60
+[PN outer] iter 1/10000 | loss=2.674495e+01 | rel_change=2.599e-05 | ls_ok=TRUE | inner=65 | admm_tol=1.0e-05
+[PN path] step 59/60
+[PN outer] iter 1/10000 | loss=2.666603e+01 | rel_change=2.005e-05 | ls_ok=TRUE | inner=59 | admm_tol=1.0e-05
+[PN path] step 60/60
+[PN outer] iter 1/10000 | loss=2.659758e+01 | rel_change=1.493e-05 | ls_ok=TRUE | inner=57 | admm_tol=1.0e-05
+[PG path] step 1/60
+[PG path] step 2/60
+[PG path] step 3/60
+[PG path] step 4/60
+[PG path] step 5/60
+[PG path] step 6/60
+[PG path] step 7/60
+[PG path] step 8/60
+[PG path] step 9/60
+[PG path] step 10/60
+[PG path] step 11/60
+[PG path] step 12/60
+[PG path] step 13/60
+[PG path] step 14/60
+[PG path] step 15/60
+[PG path] step 16/60
+[PG path] step 17/60
+[PG path] step 18/60
+[PG path] step 19/60
+[PG path] step 20/60
+[PG path] step 21/60
+[PG path] step 22/60
+[PG path] step 23/60
+[PG path] step 24/60
+[PG path] step 25/60
+[PG path] step 26/60
+[PG path] step 27/60
+[PG path] step 28/60
+[PG path] step 29/60
+[PG path] step 30/60
+[PG path] step 31/60
+[PG path] step 32/60
+[PG path] step 33/60
+[PG path] step 34/60
+[PG path] step 35/60
+[PG path] step 36/60
+[PG path] step 37/60
+[PG path] step 38/60
+[PG path] step 39/60
+[PG path] step 40/60
+[PG path] step 41/60
+[PG path] step 42/60
+[PG path] step 43/60
+[PG path] step 44/60
+[PG path] step 45/60
+[PG path] step 46/60
+[PG path] step 47/60
+[PG path] step 48/60
+[PG path] step 49/60
+[PG path] step 50/60
+[PG path] step 51/60
+[PG path] step 52/60
+[PG path] step 53/60
+[PG path] step 54/60
+[PG path] step 55/60
+[PG path] step 56/60
+[PG path] step 57/60
+[PG path] step 58/60
+[PG path] step 59/60
+[PG path] step 60/60
+[PN path] step 1/60
+[PN outer] iter 1/10000 | loss=1.380860e+02 | rel_change=8.583e-15 | ls_ok=TRUE | inner=111 | admm_tol=1.0e-07
+[PN path] step 2/60
+[PN outer] iter 1/10000 | loss=1.380860e+02 | rel_change=0.000e+00 | ls_ok=FALSE | inner=3000 | admm_tol=1.0e-08
+[PN path] step 3/60
+[PN outer] iter 1/10000 | loss=1.376858e+02 | rel_change=2.878e-03 | ls_ok=TRUE | inner=1000 | admm_tol=1.0e-06
+[PN path] step 4/60
+[PN outer] iter 1/10000 | loss=1.364569e+02 | rel_change=2.784e-03 | ls_ok=TRUE | inner=1000 | admm_tol=1.0e-06
+[PN path] step 5/60
+[PN outer] iter 1/10000 | loss=1.343124e+02 | rel_change=3.511e-03 | ls_ok=TRUE | inner=1000 | admm_tol=1.0e-06
+[PN path] step 6/60
+[PN outer] iter 1/10000 | loss=1.315357e+02 | rel_change=3.004e-03 | ls_ok=TRUE | inner=47 | admm_tol=1.0e-06
+[PN path] step 7/60
+[PN outer] iter 1/10000 | loss=1.280150e+02 | rel_change=2.900e-03 | ls_ok=TRUE | inner=50 | admm_tol=1.0e-06
+[PN path] step 8/60
+[PN outer] iter 1/10000 | loss=1.240357e+02 | rel_change=2.743e-03 | ls_ok=TRUE | inner=169 | admm_tol=1.0e-06
+[PN path] step 9/60
+[PN outer] iter 1/10000 | loss=1.197588e+02 | rel_change=2.624e-03 | ls_ok=TRUE | inner=169 | admm_tol=1.0e-06
+[PN path] step 10/60
+[PN outer] iter 1/10000 | loss=1.152946e+02 | rel_change=2.566e-03 | ls_ok=TRUE | inner=165 | admm_tol=1.0e-06
+[PN path] step 11/60
+[PN outer] iter 1/10000 | loss=1.107228e+02 | rel_change=2.501e-03 | ls_ok=TRUE | inner=153 | admm_tol=1.0e-06
+[PN path] step 12/60
+[PN outer] iter 1/10000 | loss=1.061190e+02 | rel_change=2.433e-03 | ls_ok=TRUE | inner=139 | admm_tol=1.0e-06
+[PN path] step 13/60
+[PN outer] iter 1/10000 | loss=1.017746e+02 | rel_change=1.221e-04 | ls_ok=TRUE | inner=1000 | admm_tol=1.0e-06
+[PN path] step 14/60
+[PN outer] iter 1/10000 | loss=9.703783e+01 | rel_change=2.330e-03 | ls_ok=TRUE | inner=134 | admm_tol=1.0e-06
+[PN path] step 15/60
+[PN outer] iter 1/10000 | loss=9.263716e+01 | rel_change=2.278e-03 | ls_ok=TRUE | inner=130 | admm_tol=1.0e-06
+[PN path] step 16/60
+[PN outer] iter 1/10000 | loss=8.837133e+01 | rel_change=2.220e-03 | ls_ok=TRUE | inner=146 | admm_tol=1.0e-06
+[PN path] step 17/60
+[PN outer] iter 1/10000 | loss=8.425754e+01 | rel_change=2.191e-03 | ls_ok=TRUE | inner=162 | admm_tol=1.0e-06
+[PN path] step 18/60
+[PN outer] iter 1/10000 | loss=8.030393e+01 | rel_change=2.172e-03 | ls_ok=TRUE | inner=143 | admm_tol=1.0e-06
+[PN path] step 19/60
+[PN outer] iter 1/10000 | loss=7.651641e+01 | rel_change=2.122e-03 | ls_ok=TRUE | inner=90 | admm_tol=1.0e-06
+[PN path] step 20/60
+[PN outer] iter 1/10000 | loss=7.290216e+01 | rel_change=2.102e-03 | ls_ok=TRUE | inner=166 | admm_tol=1.0e-06
+[PN path] step 21/60
+[PN outer] iter 1/10000 | loss=6.946225e+01 | rel_change=2.047e-03 | ls_ok=TRUE | inner=175 | admm_tol=1.0e-06
+[PN outer] iter 50/10000 | loss=6.943368e+01 | rel_change=1.410e-12 | ls_ok=TRUE | inner=1 | admm_tol=1.0e-06
+[PN path] step 22/60
+[PN outer] iter 1/10000 | loss=6.620197e+01 | rel_change=1.985e-03 | ls_ok=TRUE | inner=217 | admm_tol=1.0e-06
+[PN path] step 23/60
+[PN outer] iter 1/10000 | loss=6.311906e+01 | rel_change=1.952e-03 | ls_ok=TRUE | inner=219 | admm_tol=1.0e-06
+[PN path] step 24/60
+[PN outer] iter 1/10000 | loss=6.020864e+01 | rel_change=1.916e-03 | ls_ok=TRUE | inner=165 | admm_tol=1.0e-06
+[PN path] step 25/60
+[PN outer] iter 1/10000 | loss=5.745547e+01 | rel_change=1.968e-03 | ls_ok=TRUE | inner=150 | admm_tol=1.0e-06
+[PN path] step 26/60
+[PN outer] iter 1/10000 | loss=5.485006e+01 | rel_change=1.924e-03 | ls_ok=TRUE | inner=129 | admm_tol=1.0e-06
+[PN path] step 27/60
+[PN outer] iter 1/10000 | loss=5.239170e+01 | rel_change=1.869e-03 | ls_ok=TRUE | inner=136 | admm_tol=1.0e-06
+[PN path] step 28/60
+[PN outer] iter 1/10000 | loss=5.007644e+01 | rel_change=1.810e-03 | ls_ok=TRUE | inner=148 | admm_tol=1.0e-06
+[PN path] step 29/60
+[PN outer] iter 1/10000 | loss=4.790282e+01 | rel_change=1.740e-03 | ls_ok=TRUE | inner=280 | admm_tol=1.0e-06
+[PN path] step 30/60
+[PN outer] iter 1/10000 | loss=4.586690e+01 | rel_change=1.671e-03 | ls_ok=TRUE | inner=205 | admm_tol=1.0e-06
+[PN path] step 31/60
+[PN outer] iter 1/10000 | loss=4.396783e+01 | rel_change=1.547e-03 | ls_ok=TRUE | inner=232 | admm_tol=1.0e-06
+[PN path] step 32/60
+[PN outer] iter 1/10000 | loss=4.220418e+01 | rel_change=1.447e-03 | ls_ok=TRUE | inner=142 | admm_tol=1.0e-06
+[PN path] step 33/60
+[PN outer] iter 1/10000 | loss=4.057234e+01 | rel_change=1.329e-03 | ls_ok=TRUE | inner=113 | admm_tol=1.0e-06
+[PN path] step 34/60
+[PN outer] iter 1/10000 | loss=3.906966e+01 | rel_change=1.193e-03 | ls_ok=TRUE | inner=118 | admm_tol=1.0e-06
+[PN path] step 35/60
+[PN outer] iter 1/10000 | loss=3.769454e+01 | rel_change=1.048e-03 | ls_ok=TRUE | inner=128 | admm_tol=1.0e-06
+[PN path] step 36/60
+[PN outer] iter 1/10000 | loss=3.644314e+01 | rel_change=9.130e-04 | ls_ok=TRUE | inner=138 | admm_tol=1.0e-06
+[PN path] step 37/60
+[PN outer] iter 1/10000 | loss=3.531038e+01 | rel_change=7.814e-04 | ls_ok=TRUE | inner=152 | admm_tol=1.0e-06
+[PN path] step 38/60
+[PN outer] iter 1/10000 | loss=3.428995e+01 | rel_change=6.726e-04 | ls_ok=TRUE | inner=166 | admm_tol=1.0e-06
+[PN path] step 39/60
+[PN outer] iter 1/10000 | loss=3.337443e+01 | rel_change=5.749e-04 | ls_ok=TRUE | inner=173 | admm_tol=1.0e-06
+[PN path] step 40/60
+[PN outer] iter 1/10000 | loss=3.255588e+01 | rel_change=4.934e-04 | ls_ok=TRUE | inner=184 | admm_tol=1.0e-06
+[PN path] step 41/60
+[PN outer] iter 1/10000 | loss=3.182552e+01 | rel_change=4.385e-04 | ls_ok=TRUE | inner=219 | admm_tol=1.0e-06
+[PN outer] iter 50/10000 | loss=3.182510e+01 | rel_change=3.994e-14 | ls_ok=TRUE | inner=25 | admm_tol=1.0e-08
+[PN path] step 42/60
+[PN outer] iter 1/10000 | loss=3.117446e+01 | rel_change=3.912e-04 | ls_ok=TRUE | inner=140 | admm_tol=1.0e-06
+[PN path] step 43/60
+[PN outer] iter 1/10000 | loss=3.059422e+01 | rel_change=3.536e-04 | ls_ok=TRUE | inner=137 | admm_tol=1.0e-06
+[PN path] step 44/60
+[PN outer] iter 1/10000 | loss=3.007718e+01 | rel_change=3.254e-04 | ls_ok=TRUE | inner=131 | admm_tol=1.0e-06
+[PN path] step 45/60
+[PN outer] iter 1/10000 | loss=2.961585e+01 | rel_change=3.022e-04 | ls_ok=TRUE | inner=134 | admm_tol=1.0e-06
+[PN path] step 46/60
+[PN outer] iter 1/10000 | loss=2.920428e+01 | rel_change=2.715e-04 | ls_ok=TRUE | inner=141 | admm_tol=1.0e-06
+[PN path] step 47/60
+[PN outer] iter 1/10000 | loss=2.883715e+01 | rel_change=2.456e-04 | ls_ok=TRUE | inner=143 | admm_tol=1.0e-06
+[PN path] step 48/60
+[PN outer] iter 1/10000 | loss=2.850993e+01 | rel_change=2.133e-04 | ls_ok=TRUE | inner=150 | admm_tol=1.0e-06
+[PN path] step 49/60
+[PN outer] iter 1/10000 | loss=2.821886e+01 | rel_change=1.826e-04 | ls_ok=TRUE | inner=153 | admm_tol=1.0e-06
+[PN path] step 50/60
+[PN outer] iter 1/10000 | loss=2.796048e+01 | rel_change=1.549e-04 | ls_ok=TRUE | inner=156 | admm_tol=1.0e-06
+[PN path] step 51/60
+[PN outer] iter 1/10000 | loss=2.773175e+01 | rel_change=1.262e-04 | ls_ok=TRUE | inner=160 | admm_tol=1.0e-06
+[PN path] step 52/60
+[PN outer] iter 1/10000 | loss=2.752992e+01 | rel_change=1.023e-04 | ls_ok=TRUE | inner=165 | admm_tol=1.0e-06
+[PN path] step 53/60
+[PN outer] iter 1/10000 | loss=2.735228e+01 | rel_change=8.359e-05 | ls_ok=TRUE | inner=167 | admm_tol=1.0e-06
+[PN path] step 54/60
+[PN outer] iter 1/10000 | loss=2.719627e+01 | rel_change=6.818e-05 | ls_ok=TRUE | inner=167 | admm_tol=1.0e-06
+[PN path] step 55/60
+[PN outer] iter 1/10000 | loss=2.705956e+01 | rel_change=5.509e-05 | ls_ok=TRUE | inner=191 | admm_tol=1.0e-06
+[PN path] step 56/60
+[PN outer] iter 1/10000 | loss=2.694002e+01 | rel_change=4.364e-05 | ls_ok=TRUE | inner=177 | admm_tol=1.0e-06
+[PN path] step 57/60
+[PN outer] iter 1/10000 | loss=2.683573e+01 | rel_change=3.446e-05 | ls_ok=TRUE | inner=134 | admm_tol=1.0e-06
+[PN path] step 58/60
+[PN outer] iter 1/10000 | loss=2.674492e+01 | rel_change=2.692e-05 | ls_ok=TRUE | inner=130 | admm_tol=1.0e-06
+[PN path] step 59/60
+[PN outer] iter 1/10000 | loss=2.666600e+01 | rel_change=2.087e-05 | ls_ok=TRUE | inner=112 | admm_tol=1.0e-06
+[PN path] step 60/60
+[PN outer] iter 1/10000 | loss=2.659755e+01 | rel_change=1.583e-05 | ls_ok=TRUE | inner=115 | admm_tol=1.0e-06
+[PN outer] iter 50/10000 | loss=2.659755e+01 | rel_change=0.000e+00 | ls_ok=FALSE | inner=22 | admm_tol=1.0e-08
+[PG path] step 1/60
+[PG path] step 2/60
+[PG path] step 3/60
+[PG path] step 4/60
+[PG path] step 5/60
+[PG path] step 6/60
+[PG path] step 7/60
+[PG path] step 8/60
+[PG path] step 9/60
+[PG path] step 10/60
+[PG path] step 11/60
+[PG path] step 12/60
+[PG path] step 13/60
+[PG path] step 14/60
+[PG path] step 15/60
+[PG path] step 16/60
+[PG path] step 17/60
+[PG path] step 18/60
+[PG path] step 19/60
+[PG path] step 20/60
+[PG path] step 21/60
+[PG path] step 22/60
+[PG path] step 23/60
+[PG path] step 24/60
+[PG path] step 25/60
+[PG path] step 26/60
+[PG path] step 27/60
+[PG path] step 28/60
+[PG path] step 29/60
+[PG path] step 30/60
+[PG path] step 31/60
+[PG path] step 32/60
+[PG path] step 33/60
+[PG path] step 34/60
+[PG path] step 35/60
+[PG path] step 36/60
+[PG path] step 37/60
+[PG path] step 38/60
+[PG path] step 39/60
+[PG path] step 40/60
+[PG path] step 41/60
+[PG path] step 42/60
+[PG path] step 43/60
+[PG path] step 44/60
+[PG path] step 45/60
+[PG path] step 46/60
+[PG path] step 47/60
+[PG path] step 48/60
+[PG path] step 49/60
+[PG path] step 50/60
+[PG path] step 51/60
+[PG path] step 52/60
+[PG path] step 53/60
+[PG path] step 54/60
+[PG path] step 55/60
+[PG path] step 56/60
+[PG path] step 57/60
+[PG path] step 58/60
+[PG path] step 59/60
+[PG path] step 60/60
+
+=== norm_mode_tasks summary ===
+compute_mode=hybrid_auto | cpu_threads=10 | gpu_backend=metal | gpu_enabled=FALSE
+  setting_id           case tol_outer tol_inner_base tol_inner_floor
+A          A case_norm_mode     1e-04          1e-05           1e-08
+B          B case_norm_mode     1e-05          1e-06           1e-08
+  max_iter_outer first_better_found first_better_path_index
+A          10000               TRUE                       1
+B          10000               TRUE                       1
+  pn_final_loss_at_first_better pg_final_loss_at_first_better
+A                       138.086                       138.086
+B                       138.086                       138.086
+  loss_diff_at_first_better pn_cum_time_to_first_better_sec
+A             -1.193712e-12                      0.17303419
+B             -1.193712e-12                      0.08273292
+  pg_cum_time_to_first_better_sec cum_time_diff_pg_minus_pn_sec
+A                      0.08559608                   -0.08743811
+B                      0.04870391                   -0.03402901
+  setting_id           case tol_outer tol_inner_base tol_inner_floor
+A          A case_norm_mode     1e-04          1e-05           1e-08
+B          B case_norm_mode     1e-05          1e-06           1e-08
+  max_iter_outer pn_first_converged_found pn_first_converged_path
+A          10000                     TRUE                       1
+B          10000                     TRUE                       1
+  pn_cum_time_to_first_converged_sec pg_first_converged_found
+A                         0.17303419                     TRUE
+B                         0.08273292                     TRUE
+  pg_first_converged_path pg_cum_time_to_first_converged_sec
+A                       1                         0.08559608
+B                       1                         0.04870391
+  cum_time_diff_pg_minus_pn_at_first_converged_sec
+A                                      -0.08743811
+B                                      -0.03402901
+Task outputs written:
+  - pn_iteration_summary_case_norm_mode_tol_1e-04.csv
+  - pn_outer_inner_detail_case_norm_mode_tol_1e-04.csv
+  - pn_pg_final_loss_diff_case_norm_mode_tol_1e-04.csv
+  - pn_pg_time_methods_case_norm_mode_two_settings.csv

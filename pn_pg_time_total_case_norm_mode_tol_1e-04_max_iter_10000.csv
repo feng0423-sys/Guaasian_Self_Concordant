@@ -1,0 +1,3 @@
+"method","total_elapsed_sec","tol_outer","tol_inner_base","tol_inner_floor","max_iter_pg_target"
+"PN",96.8006484508514,1e-04,1e-05,1e-08,10000
+"PG",256.492800712585,1e-04,1e-05,1e-08,10000
