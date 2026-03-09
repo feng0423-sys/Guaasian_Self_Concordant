@@ -1,0 +1,103 @@
+mrce.cv=function(X, Y, lam.vec.1, lam.vec.2, kfold=5,
+        tol.out, tol.in, maxit.out, maxit.in, silent,
+        cov.tol, cov.maxit, eps, standardize, permute,
+        folds=NULL)
+{
+  n=nrow(X)
+  p=ncol(X)
+  q=ncol(Y)
+  err.mat = matrix(0, nrow=length(lam.vec.1), ncol=length(lam.vec.2))
+  if(!is.null(folds))
+  {
+    if(!is.list(folds) || length(folds) < 2)
+      stop("folds must be a non-empty list of length >= 2.")
+    fold_lens=vapply(folds, length, integer(1))
+    if(any(fold_lens == 0))
+      stop("folds contains an empty fold.")
+    all_idx=unlist(folds, use.names=FALSE)
+    if(!is.numeric(all_idx) || any(!is.finite(all_idx)))
+      stop("folds must contain finite numeric indices.")
+    all_idx=as.integer(all_idx)
+    if(any(all_idx < 1) || any(all_idx > n))
+      stop("folds indices must be within 1:nrow(X).")
+    if(anyDuplicated(all_idx))
+      stop("folds contains duplicate indices.")
+    if(length(unique(all_idx)) != n)
+      stop("folds must cover each row of X exactly once.")
+    kfold=length(folds)
+  }else{
+    if(permute)
+      ind=sample(n)
+    else
+      ind=1:n
+  }
+  for (k in 1:kfold)
+  {
+    if(!silent) cat("Staring fold : ", k, "\n")
+    if(!is.null(folds))
+      foldind=folds[[k]]
+    else
+      foldind = ind[ (1+floor((k-1)*n/kfold)):floor(k*n/kfold) ]
+    X.tr=X[-foldind,]
+    Y.tr=Y[-foldind,]
+	  X.va=X[foldind,,drop=FALSE]
+	  Y.va=Y[foldind,,drop=FALSE ]
+    mtrx=apply(X.tr, 2, mean)
+    X.tr=scale(X.tr, scale=FALSE, center=mtrx)
+    mtry=apply(Y.tr, 2, mean)
+    Y.tr=scale(Y.tr, scale=FALSE, center=mtry)
+    n.tr=nrow(Y.tr)
+    if(standardize)
+    {
+      sx=sqrt(apply(X.tr^2, 2, sum)/n.tr)
+      X.tr=scale(X.tr, center=FALSE, scale=sx)
+    }else 
+      sx=rep(1,p)
+    informed=NULL
+    informed$sx=sx
+    informed$mx=mtrx
+    informed$my=mtry
+    informed$yty=crossprod(Y.tr)
+    informed$xtx=crossprod(X.tr)
+    informed$xty=crossprod(X.tr, Y.tr)
+    informed$Bhat=matrix(0, nrow=p, ncol=q)
+    informed$omega=diag(n.tr/diag(informed$yty))
+    informed$sigma=diag(diag(informed$yty)/n.tr)
+    
+    for(i in 1:length(lam.vec.1)) 
+    {
+      if(i > 1)
+        informed=first
+      for(j in 1:length(lam.vec.2))
+      {
+        tmp.out=compute.mrce(X=X.tr,Y=Y.tr, lam1=lam.vec.1[i], lam2=lam.vec.2[j], 
+                           tol.out=tol.out, tol.in=tol.in, maxit.out=maxit.out, 
+                           maxit.in=maxit.in, silent=silent,
+                           cov.tol=cov.tol, cov.maxit=cov.maxit, 
+                           informed=informed, eps=eps, standardize=standardize)
+        Yhat.va=rep(1,nrow(X.va))%*%t(tmp.out$muhat) + X.va %*% tmp.out$Bhat
+        err.mat[i,j]=err.mat[i,j]+sum((Y.va-Yhat.va)^2)
+        informed$Bhat=tmp.out$Bhat
+        informed$omega=tmp.out$omega
+        informed$sigma=tmp.out$sigma  
+        if(j==1)
+          first=informed        
+      }
+    }
+  }
+  ## find the (i,j) for the minimum of err.mat
+  tmp = which.min(err.mat) %% (dim(err.mat)[1])
+  tmp = (tmp != 0)*tmp + (tmp == 0)*(dim(err.mat)[1])
+  best.i=tmp
+  best.j=which.min(err.mat[tmp,])
+  best.lam1=lam.vec.1[best.i]
+  best.lam2=lam.vec.2[best.j]
+  
+  out=compute.mrce(X=X,Y=Y, lam1=best.lam1, lam2=best.lam2, 
+                           tol.out=tol.out, tol.in=tol.in, maxit.out=maxit.out, 
+                           maxit.in=maxit.in, silent=silent,
+                           cov.tol=cov.tol, cov.maxit=cov.maxit, 
+                           informed=NULL, eps=eps, standardize=standardize)
+  return(list(Bhat=out$Bhat, muhat=out$muhat, omega=out$omega, mx=out$mx, my=out$my, 
+         best.lam1=best.lam1, best.lam2=best.lam2, cv.err=err.mat/n, sx=out$sx))
+}
